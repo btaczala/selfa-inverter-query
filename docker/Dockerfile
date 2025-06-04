@@ -5,6 +5,6 @@ ADD pyproject.toml .
 ADD uv.lock .
 ADD selfa.ini .
 ADD selfa-token.json .
-ADD *.py .
+ADD app app
 RUN uv sync --locked
-CMD ["uv", "run", "main.py", "--config", "selfa.ini"]
+CMD ["uv", "run", "app/main.py", "--config", "selfa.ini"]
