@@ -3,10 +3,18 @@ import os
 import time
 import logging
 import json
-import coloredlogs
 import configparser
+from colorlog import ColoredFormatter
 from selfa import Selfa
 from stdout_publisher import StdOutPublished
+from mqtt_publisher import MqttPublisher
+
+
+def print_config(config):
+
+    logging.info("mqtt configuration:")
+    for key, value in config.items():
+        logging.info(f"\t{key} = {value}")
 
 
 def fetch_token():
@@ -50,6 +58,9 @@ def main():
                         required=False,
                         help="Path to config file")
 
+    parser.add_argument("--log-level",
+                        default=logging.INFO,
+                        type=lambda x: getattr(logging, x))
     args = parser.parse_args()
 
     if not os.path.exists("selfa-token.json"):
@@ -64,11 +75,35 @@ def main():
 
     config = configparser.ConfigParser()
     config.read(args.config)
-    coloredlogs.install(level='INFO',
-                        fmt='%(asctime)s - %(levelname)s - %(message)s')
+
+    logging.basicConfig(level=args.log_level,
+                        format='%(asctime)s - %(levelname)s - %(message)s')
+    handler = logging.StreamHandler()
+    formatter = ColoredFormatter(
+        "%(log_color)s%(levelname)-8s%(reset)s %(blue)s%(message)s",
+        datefmt=None,
+        reset=True,
+        log_colors={
+            'DEBUG': 'cyan',
+            'INFO': 'green',
+            'WARNING': 'yellow',
+            'ERROR': 'red',
+            'CRITICAL': 'red,bg_white',
+        },
+        secondary_log_colors={},
+        style='%')
+    handler.setFormatter(formatter)
 
     if 'stdout' in config.sections():
         publishers.append(StdOutPublished())
+
+    if 'mqtt' in config.sections():
+        # logging.info(f'Creating mqtt with config={config["mqtt"]}')
+        print_config(config["mqtt"])
+        mqtt = MqttPublisher(config['mqtt'])
+        mqtt.set_topic(serial=config['selfa']['serial'],
+                       station=config['selfa']['station'])
+        publishers.append(mqtt)
 
     if not config['selfa']['station']:
         print("station is required")
@@ -80,7 +115,7 @@ def main():
 
         data = []
 
-        # data.append(selfa.get_current_info(config['selfa']['station']))
+        data.append(selfa.get_current_info(config['selfa']['station']))
         data.append(selfa.get_grid_voltage_level(config['selfa']['serial']))
 
         for publisher in publishers:
