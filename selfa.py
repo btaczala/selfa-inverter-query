@@ -83,7 +83,7 @@ class Selfa:
                     return None
         except FileNotFoundError:
             logging.error("selfa-token.json file not found.")
-            return None
+            raise
         except json.JSONDecodeError:
             logging.error("Error decoding JSON from selfa-token.json.")
-            return None
+            raise

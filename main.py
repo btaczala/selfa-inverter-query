@@ -56,6 +56,9 @@ def main():
         exit(0)
 
     config = configparser.ConfigParser()
+    if not args.config:
+        print("provide path to config file")
+        exit(1)
     config.read(args.config)
 
     logging.basicConfig(level=args.log_level,

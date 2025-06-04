@@ -34,7 +34,6 @@ class MqttPublisher:
         for v in json_payload:
             topic = self.topic + f"/{v}"
             self.client.publish(topic, json.dumps(json_payload[v]))
-            logging.info(f'MqttPublisher: {v} : {json_payload[v]} {topic}')
 
     def on_connect(self, client, userdata, flags, reason_code):
-        logging.info("Connected")
+        logging.info(f"Connected to {self.config['host']}")
