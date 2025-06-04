@@ -7,7 +7,6 @@ import coloredlogs
 import configparser
 from selfa import Selfa
 from stdout_publisher import StdOutPublished
-from mqtt_publisher import MqttPublisher
 
 
 def fetch_token():
@@ -25,7 +24,7 @@ def read_token():
             token_data = json.load(file)
             token = token_data.get("token")
             if token:
-                logging.info("Token read successfully.")
+                logging.debug("Token read successfully.")
                 return token
             else:
                 logging.error("Token not found in the file.")
@@ -48,67 +47,45 @@ def main():
     parser.add_argument("--list", action="store_true", help="List stations")
     parser.add_argument("--config",
                         type=str,
-                        required=True,
+                        required=False,
                         help="Path to config file")
-    parser.add_argument("--station",
-                        type=str,
-                        required=False,
-                        help="Station id")
-    parser.add_argument("--outputs",
-                        type=str,
-                        nargs='+',
-                        choices=['mqtt', 'influxdb', 'stdout'],
-                        required=False,
-                        help="Output destination(s)")
 
     args = parser.parse_args()
-    config = configparser.ConfigParser();
-    config.read(args.config)
-    coloredlogs.install(level='INFO',
-                        fmt='%(asctime)s - %(levelname)s - %(message)s')
 
-    # Your application logic here
     if not os.path.exists("selfa-token.json"):
-        logging.info("selfa-token.json does not exists, authenticating first")
         fetch_token()
     publishers = []
-
-    if 'stdout' in args.outputs:
-        publishers.append(StdOutPublished())
-
-    if 'mqtt' in args.outputs:
-        if not args.mqtt_host:
-            print("mqtt-host is required")
-            exit(1)
-        topic = args.mqtt_topic if args.mqtt_topic else f'selfa/{args.station}'
-        publishers.append(
-            MqttPublisher(host=args.mqtt_host,
-                          port=args.mqtt_port,
-                          topic=topic,
-                          username=args.mqtt_username,
-                          password=args.mqtt_password))
 
     if args.list:
         token = read_token()
         selfa = Selfa(token=token)
-
         print(selfa.list())
         exit(0)
 
-    if not args.station:
+    config = configparser.ConfigParser()
+    config.read(args.config)
+    coloredlogs.install(level='INFO',
+                        fmt='%(asctime)s - %(levelname)s - %(message)s')
+
+    if 'stdout' in config.sections():
+        publishers.append(StdOutPublished())
+
+    if not config['selfa']['station']:
         print("station is required")
         exit(1)
-
-    # logging.info(f'{args.output}')
 
     while True:
         token = read_token()
         selfa = Selfa(token=token)
 
-        data = selfa.get_current_info(args.station)
+        data = []
+
+        # data.append(selfa.get_current_info(config['selfa']['station']))
+        data.append(selfa.get_grid_voltage_level(config['selfa']['serial']))
 
         for publisher in publishers:
-            publisher.publish(data)
+            for d in data:
+                publisher.publish(d)
         time.sleep(args.timeout)
 
 

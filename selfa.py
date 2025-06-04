@@ -8,15 +8,10 @@ class Selfa:
 
     def __init__(self, token):
         self.token = token
-        logging.info(f"token is {self.token}")
+        logging.debug(f"Creating selfa. token {self.token}")
 
-    # def get_current_info(self):
-    #     # Placeholder for the logic to get current info
-    #     logging.info("Getting current info...")
-    #     return {"info": "This is the current info"}
-    #
     def fetch(self, rest_of_url: str, token: str):
-        headers = {'token': f'{token}'}
+        headers = {'token': f'{token}', 'lang': 'PL_PL'}
         ret = requests.get(f'{base_url}/{rest_of_url}', headers=headers)
 
         return ret.json()
@@ -29,3 +24,14 @@ class Selfa:
         return self.fetch(
             f'gen2api/pc/distributor/station/stationCurrentInfo/{stationId}/system?stationId={stationId}',
             self.token)
+
+    def get_grid_voltage_level(self, serial: str):
+        json = self.fetch(
+            f'gen2api/pc/owner/inverter/current_info_plus/{serial}',
+            self.token)
+
+        return {
+            'l1': json['body'][2]['contents'][0]['contents'][0]['value'],
+            'l2': json['body'][2]['contents'][0]['contents'][1]['value'],
+            'l3': json['body'][2]['contents'][0]['contents'][2]['value'],
+        }
