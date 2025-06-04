@@ -8,6 +8,7 @@ from colorlog import ColoredFormatter
 from selfa import Selfa
 from stdout_publisher import StdOutPublished
 from mqtt_publisher import MqttPublisher
+from influxdb2x_publisher import InfluxdbPublisher
 
 
 def print_config(config):
@@ -104,6 +105,10 @@ def main():
         mqtt.set_topic(serial=config['selfa']['serial'],
                        station=config['selfa']['station'])
         publishers.append(mqtt)
+
+    if 'influxdb' in config.sections():
+        publisher = InfluxdbPublisher(config['influxdb'])
+        publishers.append(publisher)
 
     if not config['selfa']['station']:
         print("station is required")
