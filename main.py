@@ -27,25 +27,6 @@ def get_data(token: str):
     pass
 
 
-def read_token():
-    try:
-        with open("selfa-token.json", "r") as file:
-            token_data = json.load(file)
-            token = token_data.get("token")
-            if token:
-                logging.debug("Token read successfully.")
-                return token
-            else:
-                logging.error("Token not found in the file.")
-                return None
-    except FileNotFoundError:
-        logging.error("selfa-token.json file not found.")
-        return None
-    except json.JSONDecodeError:
-        logging.error("Error decoding JSON from selfa-token.json.")
-        return None
-
-
 def main():
     parser = argparse.ArgumentParser(
         description="Description of your application.")
@@ -113,15 +94,12 @@ def main():
     if not config['selfa']['station']:
         print("station is required")
         exit(1)
+    selfa = Selfa(config['selfa'])
 
     while True:
-        token = read_token()
-        selfa = Selfa(token=token)
-
         data = []
-
-        data.append(selfa.get_current_info(config['selfa']['station']))
-        data.append(selfa.get_grid_voltage_level(config['selfa']['serial']))
+        data.append(selfa.get_current_info())
+        data.append(selfa.get_grid_voltage_level())
 
         for publisher in publishers:
             for d in data:
