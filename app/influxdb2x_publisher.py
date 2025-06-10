@@ -31,13 +31,16 @@ class InfluxdbPublisher:
 
     def publish(self, json_payload: dict):
 
-        point = Point("inverter_status").time(datetime.utcnow(),
-                                              WritePrecision.NS)
-        point.tag("source", "selfa")
-        flat = flatten(json_payload, separator='.')
-        for key, value in flat.items():
-            if isinstance(value, (int, float)):
-                point.field(key, value)
-        self.write_api.write(bucket=self.config['bucket'],
-                             org=self.config['org'],
-                             record=point)
+        try:
+            point = Point("inverter_status").time(datetime.utcnow(),
+                                                  WritePrecision.NS)
+            point.tag("source", "selfa")
+            flat = flatten(json_payload, separator='.')
+            for key, value in flat.items():
+                if isinstance(value, (int, float)):
+                    point.field(key, value)
+            self.write_api.write(bucket=self.config['bucket'],
+                                 org=self.config['org'],
+                                 record=point)
+        except Exception as e:
+            logging.error(f"Unable to send influxdb {e}")

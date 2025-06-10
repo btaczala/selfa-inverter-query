@@ -2,7 +2,6 @@ import argparse
 import os
 import time
 import logging
-import json
 import configparser
 from colorlog import ColoredFormatter
 from selfa import Selfa
@@ -83,12 +82,14 @@ def main():
         publishers.append(StdOutPublished())
 
     if 'mqtt' in config.sections():
-        # logging.info(f'Creating mqtt with config={config["mqtt"]}')
         print_config(config["mqtt"])
-        mqtt = MqttPublisher(config['mqtt'])
-        mqtt.set_topic(serial=config['selfa']['serial'],
-                       station=config['selfa']['station'])
-        publishers.append(mqtt)
+        try:
+            mqtt = MqttPublisher(config['mqtt'])
+            mqtt.set_topic(serial=config['selfa']['serial'],
+                           station=config['selfa']['station'])
+            publishers.append(mqtt)
+        except Exception as e:
+            logging.error(f"Unable to create mqtt config.{e}")
 
     if 'influxdb' in config.sections():
         publisher = InfluxdbPublisher(config['influxdb'])
