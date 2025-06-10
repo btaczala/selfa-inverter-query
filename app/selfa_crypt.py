@@ -1,12 +1,17 @@
 import hashlib
+import struct
+import base64
 
 
-def hash_password(username: str, password: str) -> str:
-    return bytes_to_hex(words_to_bytes(md5(string_to_bytes(password))))
+def hash_password(username: str, password: str):
+    return base64.standard_b64encode(
+        bytes_to_hex(words_to_bytes(md5(
+            string_to_bytes(password)))).encode()).decode('utf-8')
 
 
 def md5(arr: bytes):
-    return hashlib.md5(arr).digest()
+    md5_hash = hashlib.md5(arr).digest()
+    return list(struct.unpack('>4i', md5_hash))
 
 
 def bytes_to_hex(byte_list):
@@ -15,7 +20,6 @@ def bytes_to_hex(byte_list):
 
 def words_to_bytes(words: bytes):
     bytes_out = []
-    print(words)
     for i in range(len(words) * 4):
         word_index = i // 4
         shift = 24 - (i % 4) * 8

@@ -2,7 +2,9 @@ import logging
 import requests
 import configparser
 import json
+import base64
 from jinja2 import Template
+import selfa_crypt
 
 base_url = 'https://lb.solinteg-cloud.com/'
 
@@ -34,8 +36,11 @@ class Selfa:
     config: configparser.SectionProxy
 
     def __init__(self, config: configparser.SectionProxy):
-        self.token = self.read_token()
         self.config = config
+        self.token = None
+        self.read_token()
+        if self.token is None:
+            self.login()
         logging.debug(f"Creating selfa. token {self.token}")
 
     def fetch(self, rest_of_url: str):
@@ -77,13 +82,35 @@ class Selfa:
                 token = token_data.get("token")
                 if token:
                     logging.debug("Token read successfully.")
+                    self.token = token
                     return token
                 else:
                     logging.error("Token not found in the file.")
                     return None
         except FileNotFoundError:
             logging.error("selfa-token.json file not found.")
-            raise
+            return None
         except json.JSONDecodeError:
             logging.error("Error decoding JSON from selfa-token.json.")
             raise
+
+    def login(self):
+        json_payload = {
+            'account': self.config["username"],
+            'pwd': selfa_crypt.hash_password("", self.config["password"]),
+        }
+        logging.debug(f"payload is {json_payload}")
+        headers = {
+            'lang': self.config['lang'],
+        }
+        ret = requests.post(f'{base_url}/gen2api/pc/user/login',
+                            headers=headers,
+                            json=json_payload)
+        if ret.json()['errorCode'] == 1:
+            raise ConnectionError
+
+        with open("selfa-token.json", "w") as file:
+            data = {"token": ret.json()["body"][0]}
+            json.dump(data, file)
+
+        self.read_token()

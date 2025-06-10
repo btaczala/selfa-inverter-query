@@ -17,11 +17,6 @@ def print_config(config):
         logging.info(f"\t{key} = {value}")
 
 
-def fetch_token():
-    # Placeholder for the token retrieval logic
-    print("Retrieving token...")
-
-
 def get_data(token: str):
     pass
 
@@ -44,24 +39,22 @@ def main():
                         type=lambda x: getattr(logging, x))
     args = parser.parse_args()
 
-    if not os.path.exists("selfa-token.json"):
-        fetch_token()
     publishers = []
 
-    if args.list:
-        token = read_token()
-        selfa = Selfa(token=token)
-        print(selfa.list())
-        exit(0)
-
     config = configparser.ConfigParser()
+
     if not args.config:
         print("provide path to config file")
         exit(1)
     config.read(args.config)
-
     logging.basicConfig(level=args.log_level,
                         format='%(asctime)s - %(levelname)s - %(message)s')
+
+    if args.list:
+        selfa = Selfa(config['selfa'])
+        print(selfa.list())
+        exit(0)
+
     handler = logging.StreamHandler()
     formatter = ColoredFormatter(
         "%(log_color)s%(levelname)-8s%(reset)s %(blue)s%(message)s",
