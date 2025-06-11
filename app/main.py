@@ -1,8 +1,8 @@
 import argparse
-import os
 import time
 import logging
 import configparser
+import os
 from colorlog import ColoredFormatter
 from selfa import Selfa
 from stdout_publisher import StdOutPublished
@@ -11,14 +11,9 @@ from influxdb2x_publisher import InfluxdbPublisher
 
 
 def print_config(config):
-
     logging.info("mqtt configuration:")
     for key, value in config.items():
         logging.info(f"\t{key} = {value}")
-
-
-def get_data(token: str):
-    pass
 
 
 def main():
@@ -46,9 +41,14 @@ def main():
     if not args.config:
         print("provide path to config file")
         exit(1)
-    config.read(args.config)
+
     logging.basicConfig(level=args.log_level,
                         format='%(asctime)s - %(levelname)s - %(message)s')
+    if not os.path.exists(args.config):
+        logging.error(f"Path {args.config} does not exists")
+        exit(1)
+
+    config.read(args.config)
 
     if args.list:
         selfa = Selfa(config['selfa'])

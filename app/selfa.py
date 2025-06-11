@@ -2,7 +2,8 @@ import logging
 import requests
 import configparser
 import json
-import base64
+import os
+import tempfile
 from jinja2 import Template
 import selfa_crypt
 
@@ -38,6 +39,8 @@ class Selfa:
     def __init__(self, config: configparser.SectionProxy):
         self.config = config
         self.token = None
+        self.default_token_path = os.path.join(tempfile.gettempdir(),
+                                               "selfa-token.json")
         self.read_token()
         if self.token is None:
             self.login()
@@ -77,7 +80,7 @@ class Selfa:
 
     def read_token(self):
         try:
-            with open("selfa-token.json", "r") as file:
+            with open(self.default_token_path, "r") as file:
                 token_data = json.load(file)
                 token = token_data.get("token")
                 if token:
@@ -91,8 +94,8 @@ class Selfa:
             logging.error("selfa-token.json file not found.")
             return None
         except json.JSONDecodeError:
-            logging.error("Error decoding JSON from selfa-token.json.")
-            raise
+            logging.error("Error decoding JSON from selfa-token.json. Will try to reauth")
+            return None
 
     def login(self):
         json_payload = {
@@ -109,7 +112,7 @@ class Selfa:
         if ret.json()['errorCode'] == 1:
             raise ConnectionError
 
-        with open("selfa-token.json", "w") as file:
+        with open(self.default_token_path, "w") as file:
             data = {"token": ret.json()["body"][0]}
             json.dump(data, file)
 
