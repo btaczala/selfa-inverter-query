@@ -46,19 +46,21 @@ class Selfa:
             self.login()
         logging.debug(f"Creating selfa. token {self.token}")
 
-    def fetch(self, rest_of_url: str):
+    def fetch(self, rest_of_url: str, name: str):
+        logging.debug(f"fetching {rest_of_url}")
         headers = {'token': f'{self.token}', 'lang': self.config['lang']}
         ret = requests.get(f'{base_url}/{rest_of_url}', headers=headers)
         return ret.json()
 
     def list(self):
-        return self.fetch('gen2api/app/owner/station/myList?searchFilter=')
+        return self.fetch('gen2api/app/owner/station/myList?searchFilter=',
+                          "list")
 
     def get_current_info(self):
         station = self.config['station']
         j = self.fetch(
-            f'gen2api/pc/distributor/station/stationCurrentInfo/{station}/system?stationId={station}'
-        )
+            f'gen2api/pc/distributor/station/stationCurrentInfo/{station}/system?stationId={station}',
+            'station_current_info')
 
         template = Template(specification_current)
         renderer = template.render(**j)
@@ -68,7 +70,8 @@ class Selfa:
     def get_grid_voltage_level(self):
         serial = self.config['serial']
         json = self.fetch(
-            f'gen2api/pc/owner/inverter/current_info_plus/{serial}')
+            f'gen2api/pc/owner/inverter/current_info_plus/{serial}',
+            'current_info_plus')
 
         return {
             'grid': {
@@ -84,7 +87,7 @@ class Selfa:
                 token_data = json.load(file)
                 token = token_data.get("token")
                 if token:
-                    logging.debug("Token read successfully.")
+                    logging.info(f"Token read successfully {token}")
                     self.token = token
                     return token
                 else:
@@ -94,7 +97,9 @@ class Selfa:
             logging.error("selfa-token.json file not found.")
             return None
         except json.JSONDecodeError:
-            logging.error("Error decoding JSON from selfa-token.json. Will try to reauth")
+            logging.error(
+                "Error decoding JSON from selfa-token.json. Will try to reauth"
+            )
             return None
 
     def login(self):

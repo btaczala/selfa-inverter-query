@@ -5,7 +5,6 @@ import json
 
 
 class MqttPublisher:
-
     client: mqtt.Client
     config: configparser.SectionProxy
 
