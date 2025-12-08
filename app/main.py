@@ -1,5 +1,6 @@
 import argparse
 import time
+import sys
 import logging
 import configparser
 import os
@@ -55,6 +56,11 @@ def main():
         print(selfa.list())
         exit(0)
 
+    if args.timeout < 5:
+        logging.warn(
+            f"Timeout {args.timeout} is smaller than 5. This does not make sense as Selfa updates every 5 seconds "
+        )
+
     handler = logging.StreamHandler()
     formatter = ColoredFormatter(
         "%(log_color)s%(levelname)-8s%(reset)s %(blue)s%(message)s",
@@ -94,14 +100,18 @@ def main():
     selfa = Selfa(config['selfa'])
 
     while True:
-        data = []
-        data.append(selfa.get_current_info())
-        data.append(selfa.get_grid_voltage_level())
+        try:
+            data = []
+            data.append(selfa.get_current_info())
+            data.append(selfa.get_grid_voltage_level())
 
-        for publisher in publishers:
-            for d in data:
-                publisher.publish(d)
-        time.sleep(args.timeout)
+            for publisher in publishers:
+                for d in data:
+                    publisher.publish(d)
+            time.sleep(args.timeout)
+        except Exception as e:
+            logging.error(f'Unknown error {e}')
+            sys.exit(1)
 
 
 if __name__ == "__main__":

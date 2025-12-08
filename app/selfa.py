@@ -46,11 +46,28 @@ class Selfa:
             self.login()
         logging.debug(f"Creating selfa. token {self.token}")
 
-    def fetch(self, rest_of_url: str, name: str):
-        logging.debug(f"fetching {rest_of_url}")
+    def fetch(self, rest_of_url: str, name: str, retry: bool = False):
+        logging.debug(f"fetching name {name} = {rest_of_url}")
         headers = {'token': f'{self.token}', 'lang': self.config['lang']}
         ret = requests.get(f'{base_url}/{rest_of_url}', headers=headers)
-        return ret.json()
+        j = ret.json()
+        if j and 'errorCode' in j and 'info' in j:
+            if j['info'] and 'code' in j['info']:
+                if j['info']['code'] == 'error.10004' and not retry:
+                    logging.info("Need to reauth")
+                    self.reauth()
+                    return self.fetch(rest_of_url, name, True)
+                elif retry:
+                    raise Exception(f'error {j['info']['code']} while retrying. Should never happen')
+                else:
+                    raise Exception(f'Unknown error {j['info']['code']} while fetching {rest_of_url}')
+        else:
+            raise Exception(f'Unknown error {j['info']['code']} while fetching {rest_of_url}')
+        return j
+
+    def reauth(self):
+        os.remove(self.default_token_path)
+        self.login()
 
     def list(self):
         return self.fetch('gen2api/app/owner/station/myList?searchFilter=',
@@ -62,10 +79,13 @@ class Selfa:
             f'gen2api/pc/distributor/station/stationCurrentInfo/{station}/system?stationId={station}',
             'station_current_info')
 
-        template = Template(specification_current)
-        renderer = template.render(**j)
-        logging.debug(renderer)
-        return json.loads(renderer)
+        try:
+            template = Template(specification_current)
+            renderer = template.render(**j)
+            logging.debug(f'get_current_info JSON: {renderer}')
+            return json.loads(renderer)
+        except Exception as e:
+            raise e
 
     def get_grid_voltage_level(self):
         serial = self.config['serial']
@@ -73,13 +93,15 @@ class Selfa:
             f'gen2api/pc/owner/inverter/current_info_plus/{serial}',
             'current_info_plus')
 
-        return {
+        json_formatted = {
             'grid': {
                 'l1': json['body'][2]['contents'][0]['contents'][0]['value'],
                 'l2': json['body'][2]['contents'][0]['contents'][1]['value'],
                 'l3': json['body'][2]['contents'][0]['contents'][2]['value'],
             }
         }
+        logging.debug(f'get_grid_voltage_level JSON: {json_formatted}')
+        return json_formatted
 
     def read_token(self):
         try:
@@ -87,7 +109,9 @@ class Selfa:
                 token_data = json.load(file)
                 token = token_data.get("token")
                 if token:
-                    logging.info(f"Token read successfully {token}")
+                    logging.info(
+                        f"Token read successfully {token} from {self.default_token_path}"
+                    )
                     self.token = token
                     return token
                 else:
