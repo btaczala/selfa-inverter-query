@@ -17,7 +17,7 @@ specification_current = '''
             "unit": "{{body.pvPowerUnit}}"
         },
         "today": {
-            "power": {{body.powerGenerationToday}},
+            "energy": {{body.powerGenerationToday}},
             "unit": "{{body.powerGenerationTodayUnit}}"
         },
         "battery": {
@@ -41,10 +41,13 @@ class Selfa:
         self.token = None
         self.default_token_path = os.path.join(tempfile.gettempdir(),
                                                "selfa-token.json")
+        self.hw_info = {}
         self.read_token()
         if self.token is None:
             self.login()
         logging.debug(f"Creating selfa. token {self.token}")
+
+        self.get_hw_info()
 
     def fetch(self, rest_of_url: str, name: str, retry: bool = False):
         logging.debug(f"fetching name {name} = {rest_of_url}")
@@ -73,32 +76,79 @@ class Selfa:
         return self.fetch('gen2api/app/owner/station/myList?searchFilter=',
                           "list")
 
-    def get_current_info(self):
-        station = self.config['station']
-        j = self.fetch(
-            f'gen2api/pc/distributor/station/stationCurrentInfo/{station}/system?stationId={station}',
-            'station_current_info')
+    def get_hw_info(self):
+        data = self.fetch(f'gen2api/pc/owner/inverter/current_info_plus/{self.config['serial']}', 'get_hw_info')
+        self.hw_info = {
+            "name": data['body'][0]['contents'][0]['value'],
+            "sn": data['body'][0]['contents'][1]['value'],
+            "model": data['body'][0]['contents'][3]['value'],
+            "power": data['body'][0]['contents'][4]['value'],
+            "software": data['body'][0]['contents'][5]['value']
+        }
+        logging.info(self.hw_info)
 
-        try:
-            template = Template(specification_current)
-            renderer = template.render(**j)
-            logging.debug(f'get_current_info JSON: {renderer}')
-            return json.loads(renderer)
-        except Exception as e:
-            raise e
-
-    def get_grid_voltage_level(self):
+    def get_current_info_plus(self):
         serial = self.config['serial']
         json = self.fetch(
             f'gen2api/pc/owner/inverter/current_info_plus/{serial}',
             'current_info_plus')
 
         json_formatted = {
+            'pv': {
+                'power': {
+                    'value': json['body'][1]['contents'][6]['value'],
+                    'unit': json['body'][1]['contents'][6]['unit'],
+                },
+                'daily': {
+                    'value': json['body'][1]['contents'][7]['value'],
+                    'unit': json['body'][1]['contents'][7]['unit'],
+                }
+            },
+            'inverter': {
+                'voltage': {
+                    'l1': json['body'][2]['contents'][0]['contents'][0]['value'],
+                    'l2': json['body'][2]['contents'][0]['contents'][1]['value'],
+                    'l3': json['body'][2]['contents'][0]['contents'][2]['value'],
+                    'unit': json['body'][2]['contents'][0]['contents'][2]['unit'],
+                },
+                'current': {
+                    'l1': json['body'][2]['contents'][1]['contents'][0]['value'],
+                    'l2': json['body'][2]['contents'][1]['contents'][1]['value'],
+                    'l3': json['body'][2]['contents'][1]['contents'][2]['value'],
+                    'unit': json['body'][2]['contents'][1]['contents'][2]['unit'],
+                },
+                'temperature': {
+                    'value': json['body'][2]['contents'][8]['value'],
+                    'unit': json['body'][2]['contents'][8]['unit'],
+                },
+                'battery': {
+                    'power': {
+                        'value': json['body'][4]['contents'][6]['value'],
+                        'unit': json['body'][4]['contents'][6]['unit'],
+                    },
+                    'current': {
+                        'value': json['body'][4]['contents'][7]['value'],
+                        'unit': json['body'][4]['contents'][7]['unit'],
+                    },
+                    'voltage': {
+                        'value': json['body'][4]['contents'][8]['value'],
+                        'unit': json['body'][4]['contents'][8]['unit'],
+                    },
+                    'soc': json['body'][4]['contents'][9]['value'],
+                    'soh': json['body'][4]['contents'][10]['value']
+                }
+            },
             'grid': {
-                'l1': json['body'][2]['contents'][0]['contents'][0]['value'],
-                'l2': json['body'][2]['contents'][0]['contents'][1]['value'],
-                'l3': json['body'][2]['contents'][0]['contents'][2]['value'],
+                'total_power': float(json['body'][6]['contents'][0]['contents'][0]['value']) + float(json['body'][6]['contents'][0]['contents'][1]['value']) + float(json['body'][6]['contents'][0]['contents'][2]['value']),
+                'power': {
+                    'l1': json['body'][6]['contents'][0]['contents'][0]['value'],
+                    'l2': json['body'][6]['contents'][0]['contents'][1]['value'],
+                    'l3': json['body'][6]['contents'][0]['contents'][2]['value'],
+                    'unit': json['body'][6]['contents'][0]['contents'][2]['unit'],
+                }
+
             }
+
         }
         logging.debug(f'get_grid_voltage_level JSON: {json_formatted}')
         return json_formatted

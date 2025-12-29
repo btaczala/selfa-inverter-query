@@ -9,6 +9,7 @@ dependencies = [
     "colorlog>=6.9.0",
     "configparser>=7.2.0",
     "flatten-json>=0.1.14",
+    "ha-mqtt-discoverable",
     "influxdb-client>=1.49.0",
     "jinja2>=3.1.6",
     "paho-mqtt>=2.1.0",
@@ -19,3 +20,11 @@ dependencies = [
 dev = [
     "pytest>=8.4.0",
 ]
+
+[tool.yapf]
+based_on_style = 'pep8'
+spaces_before_comment = 4
+split_before_logical_operator = true
+
+[tool.uv.sources]
+ha-mqtt-discoverable = { git = "https://github.com/unixorn/ha-mqtt-discoverable.git", rev = "d36f61c36e3ab3ffd1fe7af4e054f22b9a3cb04c" }

@@ -8,6 +8,7 @@ from colorlog import ColoredFormatter
 from selfa import Selfa
 from stdout_publisher import StdOutPublished
 from mqtt_publisher import MqttPublisher
+from hass_publisher import HomeAssistantPublisher
 from influxdb2x_publisher import InfluxdbPublisher
 
 
@@ -17,7 +18,27 @@ def print_config(config):
         logging.info(f"\t{key} = {value}")
 
 
-def main():
+def setup_logging(level):
+    handler = logging.StreamHandler()
+    formatter = ColoredFormatter(
+        "%(log_color)s%(levelname)-8s%(reset)s %(blue)s%(message)s",
+        datefmt=None,
+        reset=True,
+        log_colors={
+            'DEBUG': 'cyan',
+            'INFO': 'green',
+            'WARNING': 'yellow',
+            'ERROR': 'red',
+            'CRITICAL': 'red,bg_white',
+        },
+        secondary_log_colors={},
+        style='%')
+    handler.setFormatter(formatter)
+    logging.basicConfig(level=level,
+                        format='%(asctime)s - %(levelname)s - %(message)s')
+
+
+def parse_arguments():
     parser = argparse.ArgumentParser(
         description="Description of your application.")
     parser.add_argument("--timeout",
@@ -33,7 +54,11 @@ def main():
     parser.add_argument("--log-level",
                         default=logging.INFO,
                         type=lambda x: getattr(logging, x))
-    args = parser.parse_args()
+    return parser.parse_args()
+
+
+def main():
+    args = parse_arguments()
 
     publishers = []
 
@@ -43,8 +68,7 @@ def main():
         print("provide path to config file")
         exit(1)
 
-    logging.basicConfig(level=args.log_level,
-                        format='%(asctime)s - %(levelname)s - %(message)s')
+    setup_logging(args.log_level)
     if not os.path.exists(args.config):
         logging.error(f"Path {args.config} does not exists")
         exit(1)
@@ -61,57 +85,43 @@ def main():
             f"Timeout {args.timeout} is smaller than 5. This does not make sense as Selfa updates every 5 seconds "
         )
 
-    handler = logging.StreamHandler()
-    formatter = ColoredFormatter(
-        "%(log_color)s%(levelname)-8s%(reset)s %(blue)s%(message)s",
-        datefmt=None,
-        reset=True,
-        log_colors={
-            'DEBUG': 'cyan',
-            'INFO': 'green',
-            'WARNING': 'yellow',
-            'ERROR': 'red',
-            'CRITICAL': 'red,bg_white',
-        },
-        secondary_log_colors={},
-        style='%')
-    handler.setFormatter(formatter)
+    try:
+        if 'stdout' in config.sections():
+            publishers.append(StdOutPublished())
 
-    if 'stdout' in config.sections():
-        publishers.append(StdOutPublished())
-
-    if 'mqtt' in config.sections():
-        print_config(config["mqtt"])
-        try:
+        if 'mqtt' in config.sections():
             mqtt = MqttPublisher(config['mqtt'])
             mqtt.set_topic(serial=config['selfa']['serial'],
                            station=config['selfa']['station'])
             publishers.append(mqtt)
-        except Exception as e:
-            logging.error(f"Unable to create mqtt config.{e}")
 
-    if 'influxdb' in config.sections():
-        publisher = InfluxdbPublisher(config['influxdb'])
-        publishers.append(publisher)
+        selfa = Selfa(config['selfa'])
 
-    if not config['selfa']['station']:
-        print("station is required")
-        exit(1)
-    selfa = Selfa(config['selfa'])
+        if 'homeassistant' in config.sections():
+            hass = HomeAssistantPublisher(config, selfa.hw_info)
+            publishers.append(hass)
 
-    while True:
-        try:
-            data = []
-            data.append(selfa.get_current_info())
-            data.append(selfa.get_grid_voltage_level())
+        if 'influxdb' in config.sections():
+            publisher = InfluxdbPublisher(config['influxdb'])
+            publishers.append(publisher)
 
-            for publisher in publishers:
-                for d in data:
-                    publisher.publish(d)
-            time.sleep(args.timeout)
-        except Exception as e:
-            logging.error(f'Unknown error {e}')
-            sys.exit(1)
+        if not config['selfa']['station']:
+            print("station is required")
+            exit(1)
+
+        while True:
+            try:
+
+                data = {**selfa.get_current_info_plus()}
+
+                for publisher in publishers:
+                    publisher.publish(data)
+                time.sleep(args.timeout)
+            except Exception as e:
+                logging.error(f'Unknown error {e}')
+                sys.exit(1)
+    except Exception as e:
+        logging.error(f"Unable to create mqtt config.{e}")
 
 
 if __name__ == "__main__":
