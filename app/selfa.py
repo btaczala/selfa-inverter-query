@@ -9,29 +9,6 @@ import selfa_crypt
 
 base_url = 'https://lb.solinteg-cloud.com/'
 
-specification_current = '''
-{
-    "inverter": {
-        "pv": {
-            "power": {{body.pvPower}},
-            "unit": "{{body.pvPowerUnit}}"
-        },
-        "today": {
-            "energy": {{body.powerGenerationToday}},
-            "unit": "{{body.powerGenerationTodayUnit}}"
-        },
-        "battery": {
-            "level": {{body.soc}},
-            "power": {{body.batteryPower}}
-        },
-        "meter": {
-            "power": {{body.meterPower}},
-            "unit": "{{body.meterPowerUnit}}"
-        }
-    }
-}
-'''
-
 
 class Selfa:
     config: configparser.SectionProxy
@@ -87,7 +64,15 @@ class Selfa:
         }
         logging.info(self.hw_info)
 
+    def get_current_info(self):
+        station = self.config['station']
+        j = self.fetch(
+            f'gen2api/pc/distributor/station/stationCurrentInfo/{station}/system?stationId={station}',
+            'station_current_info')
+        return j
+
     def get_current_info_plus(self):
+        small_json = self.get_current_info()
         serial = self.config['serial']
         json = self.fetch(
             f'gen2api/pc/owner/inverter/current_info_plus/{serial}',
@@ -96,13 +81,27 @@ class Selfa:
         json_formatted = {
             'pv': {
                 'power': {
-                    'value': json['body'][1]['contents'][6]['value'],
-                    'unit': json['body'][1]['contents'][6]['unit'],
+                    'value': small_json['body']['pvPower'],
+                    'unit': small_json['body']['pvPowerUnit'],
                 },
                 'daily': {
-                    'value': json['body'][1]['contents'][7]['value'],
-                    'unit': json['body'][1]['contents'][7]['unit'],
+                    'value': small_json['body']["powerGenerationToday"],
+                    'unit': small_json['body']['powerGenerationTodayUnit'],
+                },
+                'total': {
+                    'value': small_json['body']["cumulativePowerGeneration"],
+                    'unit': small_json['body']['cumulativePowerGenerationUnit'],
                 }
+            },
+            'home': {
+                'total_power': small_json['body']['loadPower'],
+                'power': {
+                    'l1': json['body'][7]['contents'][0]['contents'][0]['value'],
+                    'l2': json['body'][7]['contents'][0]['contents'][1]['value'],
+                    'l3': json['body'][7]['contents'][0]['contents'][2]['value'],
+                    'unit': json['body'][7]['contents'][0]['contents'][2]['unit'],
+                }
+
             },
             'inverter': {
                 'voltage': {
@@ -139,7 +138,7 @@ class Selfa:
                 }
             },
             'grid': {
-                'total_power': float(json['body'][6]['contents'][0]['contents'][0]['value']) + float(json['body'][6]['contents'][0]['contents'][1]['value']) + float(json['body'][6]['contents'][0]['contents'][2]['value']),
+                'total_power': small_json['body']['meterPower'],
                 'power': {
                     'l1': json['body'][6]['contents'][0]['contents'][0]['value'],
                     'l2': json['body'][6]['contents'][0]['contents'][1]['value'],
@@ -150,7 +149,6 @@ class Selfa:
             }
 
         }
-        logging.debug(f'get_grid_voltage_level JSON: {json_formatted}')
         return json_formatted
 
     def read_token(self):
