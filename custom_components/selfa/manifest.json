@@ -1,0 +1,12 @@
+{
+  "domain": "selfa",
+  "name": "SELFA Inverter",
+  "version": "0.1.0",
+  "config_flow": true,
+  "iot_class": "local_polling",
+  "requirements": [],
+  "dependencies": [],
+  "codeowners": ["@btaczala"],
+  "documentation": "https://github.com/btaczala/selfa-inverter-query",
+  "issue_tracker": "https://github.com/btaczala/selfa-inverter-query/issues"
+}
