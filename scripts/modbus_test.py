@@ -1,7 +1,12 @@
+import argparse
 import socket
 import struct
 
-HOST = "192.168.1.1"
+parser = argparse.ArgumentParser()
+parser.add_argument("--ip", default="192.168.1.1")
+args = parser.parse_args()
+
+HOST = args.ip
 PORT = 5743
 SLAVE = 0xFC
 
@@ -40,9 +45,14 @@ def i32(regs: list[int]) -> int:
 with socket.create_connection((HOST, PORT), timeout=5) as sock:
     pv_regs = read_registers(sock, 11028, 2)
     grid_regs = read_registers(sock, 11000, 2)
+    battery_brand_regs = read_registers(sock, 52500, 2)
 
 pv_kw = u32(pv_regs) / 1000
 grid_kw = i32(grid_regs) / 1000
+battery_brand = battery_brand_regs[0]
+battery_protocol = battery_brand_regs[1]
 
-print(f"PV Input:    {pv_kw:.3f} kW")
-print(f"Grid Meter:  {grid_kw:+.3f} kW  ({'import' if grid_kw > 0 else 'export'})")
+print(f"PV Input:         {pv_kw:.3f} kW")
+print(f"Grid Meter:       {grid_kw:+.3f} kW  ({'import' if grid_kw > 0 else 'export'})")
+print(f"Battery Brand:    {battery_brand}")
+print(f"Battery Protocol: {battery_protocol}")
