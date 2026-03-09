@@ -1,4 +1,24 @@
 __pycache__
+*.pyc
+.python-version
+
+# credentials
 selfa-token.json
 selfa.ini
 
+# uv
+.venv/
+
+# HA dev instance — keep only configuration.yaml
+docker/ha-config/blueprints/
+docker/ha-config/deps/
+docker/ha-config/tts/
+docker/ha-config/home-assistant.log*
+docker/ha-config/home-assistant_v2.db*
+docker/ha-config/.HA_VERSION
+docker/ha-config/.storage/
+docker/ha-config/custom_components/
+docker/ha-config/*.db
+docker/ha-config/*.db-shm
+docker/ha-config/*.db-wal
+docker/ha-config/.ha_run.lock
