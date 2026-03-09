@@ -38,4 +38,7 @@ class SelfaSensor(CoordinatorEntity[SelfaCoordinator], SensorEntity):
 
     @property
     def native_value(self):
-        return self.coordinator.data.get(self.entity_description.key)
+        value = self.coordinator.data.get(self.entity_description.key)
+        if self.entity_description.value_map and value is not None:
+            return self.entity_description.value_map.get(value, value)
+        return value

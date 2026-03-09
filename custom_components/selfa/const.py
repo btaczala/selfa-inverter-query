@@ -4,6 +4,7 @@ from homeassistant.components.sensor import (
     SensorEntityDescription,
     SensorStateClass,
 )
+from homeassistant.helpers.entity import EntityCategory
 from homeassistant.const import (
     PERCENTAGE,
     UnitOfElectricCurrent,
@@ -26,19 +27,34 @@ class SelfaSensorDescription(SensorEntityDescription):
     register: int = 0
     data_type: str = "uint16"  # uint16, int16, uint32, int32
     scale: float = 1.0
+    value_map: dict[int, str] | None = None
 
 
 SENSORS: tuple[SelfaSensorDescription, ...] = (
     # --- Inverter ---
     SelfaSensorDescription(
+        key="serial_number",
+        name="Serial Number",
+        register=0,  # virtual — value injected by coordinator
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
+    SelfaSensorDescription(
         key="inverter_status",
         name="Inverter Status",
         register=10105,
         data_type="uint16",
+        value_map={
+            0: "Waiting for grid",
+            1: "Self-checking",
+            2: "On-grid",
+            3: "Fault",
+            4: "Firmware upgrade",
+            5: "Off-grid",
+        },
     ),
     SelfaSensorDescription(
         key="inverter_ac_power",
-        name="Inverter AC Power",
+        name="Home Power",
         register=11016,
         data_type="int32",
         scale=0.001,
@@ -79,7 +95,7 @@ SENSORS: tuple[SelfaSensorDescription, ...] = (
     # --- Grid ---
     SelfaSensorDescription(
         key="grid_meter_power",
-        name="Grid Meter Power",
+        name="Grid Power",
         register=11000,
         data_type="int32",
         scale=0.001,
@@ -109,27 +125,27 @@ SENSORS: tuple[SelfaSensorDescription, ...] = (
     ),
     SelfaSensorDescription(
         key="daily_grid_injection",
-        name="Daily Grid Injection",
+        name="Energy Exported to Grid Today",
         register=31000,
         data_type="uint16",
         scale=0.1,
         native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
         device_class=SensorDeviceClass.ENERGY,
-        state_class=SensorStateClass.TOTAL_INCREASING,
+        state_class=SensorStateClass.TOTAL,
     ),
     SelfaSensorDescription(
         key="daily_grid_purchase",
-        name="Daily Grid Purchase",
+        name="Energy Imported from Grid Today",
         register=31001,
         data_type="uint16",
         scale=0.1,
         native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
         device_class=SensorDeviceClass.ENERGY,
-        state_class=SensorStateClass.TOTAL_INCREASING,
+        state_class=SensorStateClass.TOTAL,
     ),
     SelfaSensorDescription(
         key="total_grid_injection",
-        name="Total Grid Injection",
+        name="Energy Exported to Grid",
         register=31102,
         data_type="uint32",
         scale=0.1,
@@ -139,7 +155,7 @@ SENSORS: tuple[SelfaSensorDescription, ...] = (
     ),
     SelfaSensorDescription(
         key="total_grid_purchase",
-        name="Total Grid Purchase",
+        name="Energy Imported from Grid",
         register=31104,
         data_type="uint32",
         scale=0.1,
@@ -150,7 +166,7 @@ SENSORS: tuple[SelfaSensorDescription, ...] = (
     # --- PV ---
     SelfaSensorDescription(
         key="pv_input_power",
-        name="PV Input Power",
+        name="Solar Power",
         register=11028,
         data_type="uint32",
         scale=0.001,
@@ -200,17 +216,17 @@ SENSORS: tuple[SelfaSensorDescription, ...] = (
     ),
     SelfaSensorDescription(
         key="daily_pv_generation",
-        name="Daily PV Generation",
+        name="Solar Energy Today",
         register=31005,
         data_type="uint16",
         scale=0.1,
         native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
         device_class=SensorDeviceClass.ENERGY,
-        state_class=SensorStateClass.TOTAL_INCREASING,
+        state_class=SensorStateClass.TOTAL,
     ),
     SelfaSensorDescription(
         key="total_pv_generation",
-        name="Total PV Generation",
+        name="Solar Energy",
         register=31112,
         data_type="uint32",
         scale=0.1,
@@ -269,6 +285,46 @@ SENSORS: tuple[SelfaSensorDescription, ...] = (
         state_class=SensorStateClass.MEASUREMENT,
     ),
     SelfaSensorDescription(
+        key="working_mode",
+        name="Working Mode",
+        register=50000,
+        data_type="uint16",
+        value_map={
+            0x0101: "General",
+            0x0102: "Economic",
+            0x0103: "UPS",
+            0x0200: "Off-grid",
+            0x0301: "EMS AC Control",
+            0x0302: "EMS General",
+            0x0303: "EMS Battery Control",
+            0x0404: "EMS Off-grid",
+        },
+    ),
+    SelfaSensorDescription(
+        key="battery_brand",
+        name="Battery Brand",
+        register=52500,
+        data_type="uint16",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_map={
+            2: "EMS",
+            10: "Wattsonic Li-HV",
+            11: "AOBOET",
+            12: "DYNESS",
+            13: "Pylon",
+            14: "Soluna",
+            15: "SheenPlus",
+            16: "WECO",
+        },
+    ),
+    SelfaSensorDescription(
+        key="bms_status",
+        name="BMS Status",
+        register=33002,
+        data_type="uint16",
+        value_map={0: "sleep", 1: "charging", 2: "discharging", 3: "standby", 4: "fault"},
+    ),
+    SelfaSensorDescription(
         key="bms_temperature",
         name="BMS Temperature",
         register=33003,
@@ -280,29 +336,59 @@ SENSORS: tuple[SelfaSensorDescription, ...] = (
     ),
     SelfaSensorDescription(
         key="daily_battery_charge",
-        name="Daily Battery Charge",
+        name="Energy Charged into Battery Today",
         register=31003,
         data_type="uint16",
         scale=0.1,
         native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
         device_class=SensorDeviceClass.ENERGY,
-        state_class=SensorStateClass.TOTAL_INCREASING,
+        state_class=SensorStateClass.TOTAL,
     ),
     SelfaSensorDescription(
         key="daily_battery_discharge",
-        name="Daily Battery Discharge",
+        name="Energy Discharged from Battery Today",
         register=31004,
         data_type="uint16",
+        scale=0.1,
+        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
+        device_class=SensorDeviceClass.ENERGY,
+        state_class=SensorStateClass.TOTAL,
+    ),
+    SelfaSensorDescription(
+        key="daily_load_consumption",
+        name="Home Energy Today",
+        register=31006,
+        data_type="uint16",
+        scale=0.1,
+        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
+        device_class=SensorDeviceClass.ENERGY,
+        state_class=SensorStateClass.TOTAL,
+    ),
+    SelfaSensorDescription(
+        key="total_battery_charge",
+        name="Energy Charged into Battery",
+        register=31108,
+        data_type="uint32",
         scale=0.1,
         native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
         device_class=SensorDeviceClass.ENERGY,
         state_class=SensorStateClass.TOTAL_INCREASING,
     ),
     SelfaSensorDescription(
-        key="daily_load_consumption",
-        name="Daily Load Consumption",
-        register=31006,
-        data_type="uint16",
+        key="total_battery_discharge",
+        name="Energy Discharged from Battery",
+        register=31110,
+        data_type="uint32",
+        scale=0.1,
+        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
+        device_class=SensorDeviceClass.ENERGY,
+        state_class=SensorStateClass.TOTAL_INCREASING,
+    ),
+    SelfaSensorDescription(
+        key="total_load_consumption",
+        name="Home Energy",
+        register=31114,
+        data_type="uint32",
         scale=0.1,
         native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
         device_class=SensorDeviceClass.ENERGY,

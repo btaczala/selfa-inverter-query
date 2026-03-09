@@ -19,6 +19,8 @@ REGISTER_BATCHES = [
     (31000, 9),    # daily energy (31000-31008)
     (31102, 18),   # total energy (31102-31119)
     (33000, 4),    # SOC, SOH, BMS status, BMS temp (33000-33003)
+    (50000, 1),    # working mode (50000)
+    (52500, 1),    # battery brand (52500)
 ]
 
 
@@ -103,7 +105,10 @@ class SelfaCoordinator(DataUpdateCoordinator):
                     raw = b"".join(struct.pack(">H", r) for r in sn_regs)
                     self.serial_number = raw.decode("ascii", errors="replace").rstrip("\x00")
                     fw_regs = _read_registers(sock, self.slave, 10011, 2)
-                    self.firmware_version = str((fw_regs[0] << 16) | fw_regs[1])
+                    fw = (fw_regs[0] << 16) | fw_regs[1]
+                    self.firmware_version = "v{:02d}.{:02d}.{:02d}.{:02d}".format(
+                        (fw >> 24) & 0xFF, (fw >> 16) & 0xFF, (fw >> 8) & 0xFF, fw & 0xFF
+                    )
                 except Exception:
                     pass
 
@@ -115,8 +120,10 @@ class SelfaCoordinator(DataUpdateCoordinator):
                 except UpdateFailed as e:
                     _LOGGER.debug("Skipping batch starting at %d: %s", start, e)
 
-        result = {}
+        result: dict = {"serial_number": self.serial_number}
         for sensor in SENSORS:
+            if sensor.register == 0:
+                continue
             try:
                 raw = _decode([], reg_map, sensor.register, sensor.data_type)
                 result[sensor.key] = round(raw * sensor.scale, 6) if sensor.scale != 1.0 else raw

@@ -18,6 +18,8 @@ docker/ha-config/home-assistant_v2.db*
 docker/ha-config/.HA_VERSION
 docker/ha-config/.storage/
 docker/ha-config/custom_components/
+docker/ha-config/www/
+custom_components/hacs/
 docker/ha-config/*.db
 docker/ha-config/*.db-shm
 docker/ha-config/*.db-wal
