@@ -51,6 +51,13 @@ SENSORS: tuple[SelfaSensorDescription, ...] = (
         entity_category=EntityCategory.DIAGNOSTIC,
     ),
     SelfaSensorDescription(
+        key="crc_error_count",
+        name="CRC Error Count",
+        register=0,  # virtual — value injected by coordinator
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
+    SelfaSensorDescription(
         key="inverter_status",
         name="Inverter Status",
         register=10105,
