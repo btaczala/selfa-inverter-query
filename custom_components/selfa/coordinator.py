@@ -3,10 +3,21 @@ import socket
 import struct
 from datetime import timedelta
 
+from homeassistant.components.sensor import SensorStateClass
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .const import DOMAIN, SENSORS, DEFAULT_SCAN_INTERVAL
+
+# Maximum plausible energy gain per poll cycle (kWh).
+# At 5-second intervals even a 30 kW system accumulates ≤ 0.042 kWh.
+# 2.0 kWh is many orders of magnitude above that, but well below any
+# realistic bad-read value (e.g. a partial 0xFFFF word gives ~3276 kWh).
+_MAX_ENERGY_JUMP_KWH = 2.0
+
+# Maximum plausible power swing between polls (kW).
+# Real loads don't jump by 100 kW in 5 seconds.
+_MAX_POWER_SWING_KW = 50.0
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -22,6 +33,10 @@ REGISTER_BATCHES = [
     (50000, 1),    # working mode (50000)
     (52500, 1),    # battery brand (52500)
 ]
+
+
+# Lookup for spike-filter logic keyed by sensor key
+_SENSOR_MAP = {s.key: s for s in SENSORS}
 
 
 def _crc16(data: bytes) -> int:
@@ -113,11 +128,45 @@ class SelfaCoordinator(DataUpdateCoordinator):
                 return self._last_data
             raise
 
-        # For any sensor that came back None, keep the last known value
         if self._last_data:
             for key, val in result.items():
-                if val is None and self._last_data.get(key) is not None:
-                    result[key] = self._last_data[key]
+                last = self._last_data.get(key)
+
+                # Keep last known value when current read returned None
+                if val is None and last is not None:
+                    result[key] = last
+                    continue
+
+                if val is None or last is None:
+                    continue
+
+                sensor = _SENSOR_MAP.get(key)
+                if sensor is None:
+                    continue
+
+                # Energy counters must be monotonically increasing and can't
+                # jump by an unrealistic amount in a single poll cycle.
+                if sensor.state_class == SensorStateClass.TOTAL_INCREASING:
+                    if val < last:
+                        _LOGGER.debug(
+                            "Spike filter: %s dropped %.1f → %.1f, keeping last", key, last, val
+                        )
+                        result[key] = last
+                    elif val - last > _MAX_ENERGY_JUMP_KWH:
+                        _LOGGER.warning(
+                            "Spike filter: %s jumped %.1f → %.1f (delta %.1f kWh > max %.1f), keeping last",
+                            key, last, val, val - last, _MAX_ENERGY_JUMP_KWH,
+                        )
+                        result[key] = last
+
+                # Power readings shouldn't swing by more than _MAX_POWER_SWING_KW
+                elif sensor.state_class == SensorStateClass.MEASUREMENT and sensor.native_unit_of_measurement == "kW":
+                    if abs(val - last) > _MAX_POWER_SWING_KW:
+                        _LOGGER.warning(
+                            "Spike filter: %s swung %.1f → %.1f (delta %.1f kW > max %.1f), keeping last",
+                            key, last, val, abs(val - last), _MAX_POWER_SWING_KW,
+                        )
+                        result[key] = last
 
         self._last_data = result
         return result
