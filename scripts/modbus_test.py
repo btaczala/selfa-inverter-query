@@ -42,17 +42,38 @@ def i32(regs: list[int]) -> int:
     return val if val < 0x80000000 else val - 0x100000000
 
 
+def i16(reg: int) -> int:
+    return reg if reg < 0x8000 else reg - 0x10000
+
+
 with socket.create_connection((HOST, PORT), timeout=5) as sock:
     pv_regs = read_registers(sock, 11028, 2)
     grid_regs = read_registers(sock, 11000, 2)
+    phase_regs = read_registers(sock, 11009, 6)   # 11009-11014: L1-L3 V+I
+    battery_regs = read_registers(sock, 30258, 2)
     battery_brand_regs = read_registers(sock, 52500, 2)
 
 pv_kw = u32(pv_regs) / 1000
 grid_kw = i32(grid_regs) / 1000
+battery_kw = i32(battery_regs) / 1000
+home_kw = pv_kw + battery_kw - grid_kw
+
+l1_v = phase_regs[0] / 10
+l1_a = phase_regs[1] / 10
+l2_v = phase_regs[2] / 10
+l2_a = phase_regs[3] / 10
+l3_v = phase_regs[4] / 10
+l3_a = phase_regs[5] / 10
+
 battery_brand = battery_brand_regs[0]
 battery_protocol = battery_brand_regs[1]
 
 print(f"PV Input:         {pv_kw:.3f} kW")
-print(f"Grid Meter:       {grid_kw:+.3f} kW  ({'import' if grid_kw > 0 else 'export'})")
+print(f"Grid Meter:       {grid_kw:+.3f} kW  ({'export' if grid_kw > 0 else 'import'})")
+print(f"Battery:          {battery_kw:+.3f} kW  ({'discharge' if battery_kw > 0 else 'charge'})")
+print(f"Home Power:       {home_kw:.3f} kW  (PV + Bat - Grid)")
+print(f"L1:               {l1_v:.1f} V  {l1_a:.1f} A")
+print(f"L2:               {l2_v:.1f} V  {l2_a:.1f} A")
+print(f"L3:               {l3_v:.1f} V  {l3_a:.1f} A")
 print(f"Battery Brand:    {battery_brand}")
 print(f"Battery Protocol: {battery_protocol}")
