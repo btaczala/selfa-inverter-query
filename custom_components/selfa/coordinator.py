@@ -9,17 +9,19 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 
 from .const import DOMAIN, SENSORS, DEFAULT_SCAN_INTERVAL
 
-# Maximum plausible energy gain per poll cycle (kWh).
-# At 5-second intervals even a 30 kW system accumulates ≤ 0.042 kWh.
-# 2.0 kWh is many orders of magnitude above that, but well below any
-# realistic bad-read value (e.g. a partial 0xFFFF word gives ~3276 kWh).
-_MAX_ENERGY_JUMP_KWH = 2.0
-
-# Maximum plausible power swing between polls (kW).
-# Real loads don't jump by 100 kW in 5 seconds.
-_MAX_POWER_SWING_KW = 50.0
-
 _LOGGER = logging.getLogger(__name__)
+
+# A large change in any of these units triggers the confirmation gate.
+# The value must appear in TWO consecutive polls before being accepted.
+_CONFIRM_THRESHOLD_BY_UNIT: dict[str, float] = {
+    "kW":  5.0,
+    "kWh": 0.5,
+    "%":   5.0,
+    "V":  20.0,
+    "A":  10.0,
+    "°C":  5.0,
+    "Hz":  2.0,
+}
 
 # Contiguous register ranges to fetch in one request: (start, count)
 REGISTER_BATCHES = [
@@ -35,7 +37,11 @@ REGISTER_BATCHES = [
 ]
 
 
-# Lookup for spike-filter logic keyed by sensor key
+class _CrcError(UpdateFailed):
+    """Raised when a Modbus response has a bad CRC."""
+
+
+# Lookup for confirmation-gate logic keyed by sensor key
 _SENSOR_MAP = {s.key: s for s in SENSORS}
 
 
@@ -68,8 +74,19 @@ def _read_registers(sock: socket.socket, slave: int, start: int, count: int) -> 
             raise UpdateFailed("Connection closed by inverter")
         payload += chunk
 
+    data_bytes = payload[:byte_count]
+    received_crc = struct.unpack("<H", payload[byte_count : byte_count + 2])[0]
+    expected_crc = _crc16(header + data_bytes)
+    if received_crc != expected_crc:
+        _LOGGER.warning(
+            "CRC mismatch at reg %d: got %#06x, expected %#06x"
+            " (likely collision with another Modbus client)",
+            start, received_crc, expected_crc,
+        )
+        raise _CrcError(f"CRC mismatch at reg {start}")
+
     return [
-        struct.unpack(">H", payload[i : i + 2])[0]
+        struct.unpack(">H", data_bytes[i : i + 2])[0]
         for i in range(0, byte_count, 2)
     ]
 
@@ -106,6 +123,8 @@ class SelfaCoordinator(DataUpdateCoordinator):
         self.serial_number: str = "unknown"
         self.firmware_version: str = "unknown"
         self._last_data: dict = {}
+        self._pending: dict = {}  # values waiting for confirmation (spike gate)
+        self.crc_error_count: int = 0
 
     async def async_write_register(self, register: int, value: int) -> None:
         await self.hass.async_add_executor_job(self._write_register, register, value)
@@ -125,7 +144,7 @@ class SelfaCoordinator(DataUpdateCoordinator):
         except Exception as e:
             if self._last_data:
                 _LOGGER.warning("Inverter unreachable, retaining last known values: %s", e)
-                return self._last_data
+                return {**self._last_data, "crc_error_count": self.crc_error_count}
             raise
 
         if self._last_data:
@@ -135,38 +154,48 @@ class SelfaCoordinator(DataUpdateCoordinator):
                 # Keep last known value when current read returned None
                 if val is None and last is not None:
                     result[key] = last
+                    self._pending.pop(key, None)
                     continue
 
                 if val is None or last is None:
+                    self._pending.pop(key, None)
                     continue
 
                 sensor = _SENSOR_MAP.get(key)
                 if sensor is None:
                     continue
 
-                # Energy counters must be monotonically increasing and can't
-                # jump by an unrealistic amount in a single poll cycle.
-                if sensor.state_class == SensorStateClass.TOTAL_INCREASING:
-                    if val < last:
-                        _LOGGER.debug(
-                            "Spike filter: %s dropped %.1f → %.1f, keeping last", key, last, val
-                        )
-                        result[key] = last
-                    elif val - last > _MAX_ENERGY_JUMP_KWH:
-                        _LOGGER.warning(
-                            "Spike filter: %s jumped %.1f → %.1f (delta %.1f kWh > max %.1f), keeping last",
-                            key, last, val, val - last, _MAX_ENERGY_JUMP_KWH,
-                        )
-                        result[key] = last
+                threshold = _CONFIRM_THRESHOLD_BY_UNIT.get(sensor.native_unit_of_measurement)
+                if threshold is None:
+                    continue
 
-                # Power readings shouldn't swing by more than _MAX_POWER_SWING_KW
-                elif sensor.state_class == SensorStateClass.MEASUREMENT and sensor.native_unit_of_measurement == "kW":
-                    if abs(val - last) > _MAX_POWER_SWING_KW:
-                        _LOGGER.warning(
-                            "Spike filter: %s swung %.1f → %.1f (delta %.1f kW > max %.1f), keeping last",
-                            key, last, val, abs(val - last), _MAX_POWER_SWING_KW,
-                        )
-                        result[key] = last
+                # Energy counters must never go backwards (no confirmation needed)
+                if sensor.state_class == SensorStateClass.TOTAL_INCREASING and val < last:
+                    _LOGGER.debug("Spike filter: %s dropped %.3f → %.3f, keeping last", key, last, val)
+                    result[key] = last
+                    self._pending.pop(key, None)
+                    continue
+
+                delta = abs(val - last)
+                if delta <= threshold:
+                    # Normal change — clear any pending candidate
+                    self._pending.pop(key, None)
+                    continue
+
+                # Large change: require a second consecutive matching reading
+                pending = self._pending.get(key)
+                if pending is not None and abs(val - pending) <= threshold:
+                    # Confirmed over two polls — accept and clear
+                    _LOGGER.debug("Spike gate: %s confirmed %.3f → %.3f", key, last, val)
+                    self._pending.pop(key, None)
+                else:
+                    # First sighting of a large change — hold it, keep last value
+                    _LOGGER.warning(
+                        "Spike gate: %s changed %.3f → %.3f (Δ%.3f > %.3f %s), holding for confirmation",
+                        key, last, val, delta, threshold, sensor.native_unit_of_measurement,
+                    )
+                    self._pending[key] = val
+                    result[key] = last
 
         self._last_data = result
         return result
@@ -194,7 +223,10 @@ class SelfaCoordinator(DataUpdateCoordinator):
                     regs = _read_registers(sock, self.slave, start, count)
                     for i, val in enumerate(regs):
                         reg_map[start + i] = val
-                except UpdateFailed as e:
+                except _CrcError as e:
+                    self.crc_error_count += 1
+                    _LOGGER.debug("Skipping batch starting at %d: %s", start, e)
+                except (UpdateFailed, OSError) as e:
                     _LOGGER.debug("Skipping batch starting at %d: %s", start, e)
 
         _SENTINEL = {
@@ -204,7 +236,7 @@ class SelfaCoordinator(DataUpdateCoordinator):
             "int32":  0xFFFFFFFF,
         }
 
-        result: dict = {"serial_number": self.serial_number}
+        result: dict = {"serial_number": self.serial_number, "crc_error_count": self.crc_error_count}
         for sensor in SENSORS:
             if sensor.register == 0:
                 continue
