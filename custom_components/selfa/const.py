@@ -54,10 +54,18 @@ SENSORS: tuple[SelfaSensorDescription, ...] = (
     ),
     SelfaSensorDescription(
         key="inverter_ac_power",
-        name="Home Power",
+        name="Inverter AC Power",
         register=11016,
         data_type="int32",
         scale=0.001,
+        native_unit_of_measurement=UnitOfPower.KILO_WATT,
+        device_class=SensorDeviceClass.POWER,
+        state_class=SensorStateClass.MEASUREMENT,
+    ),
+    SelfaSensorDescription(
+        key="home_power",
+        name="Home Power",
+        register=0,  # virtual — computed by coordinator: PV + Battery - Grid
         native_unit_of_measurement=UnitOfPower.KILO_WATT,
         device_class=SensorDeviceClass.POWER,
         state_class=SensorStateClass.MEASUREMENT,
