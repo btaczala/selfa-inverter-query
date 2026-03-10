@@ -136,13 +136,24 @@ class SelfaCoordinator(DataUpdateCoordinator):
                 except UpdateFailed as e:
                     _LOGGER.debug("Skipping batch starting at %d: %s", start, e)
 
+        _SENTINEL = {
+            "uint16": 0xFFFF,
+            "int16":  0xFFFF,
+            "uint32": 0xFFFFFFFF,
+            "int32":  0xFFFFFFFF,
+        }
+
         result: dict = {"serial_number": self.serial_number}
         for sensor in SENSORS:
             if sensor.register == 0:
                 continue
             try:
                 raw = _decode([], reg_map, sensor.register, sensor.data_type)
-                result[sensor.key] = round(raw * sensor.scale, 6) if sensor.scale != 1.0 else raw
+                if raw == _SENTINEL.get(sensor.data_type):
+                    _LOGGER.debug("Sentinel value for %s, treating as unavailable", sensor.key)
+                    result[sensor.key] = None
+                else:
+                    result[sensor.key] = round(raw * sensor.scale, 6) if sensor.scale != 1.0 else raw
             except (KeyError, Exception) as e:
                 _LOGGER.debug("Failed to decode %s: %s", sensor.key, e)
                 result[sensor.key] = None
