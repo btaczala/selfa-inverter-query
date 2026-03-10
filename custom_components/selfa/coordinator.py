@@ -90,9 +90,25 @@ class SelfaCoordinator(DataUpdateCoordinator):
         self.slave = slave
         self.serial_number: str = "unknown"
         self.firmware_version: str = "unknown"
+        self._last_data: dict = {}
 
     async def _async_update_data(self) -> dict:
-        return await self.hass.async_add_executor_job(self._fetch)
+        try:
+            result = await self.hass.async_add_executor_job(self._fetch)
+        except Exception as e:
+            if self._last_data:
+                _LOGGER.warning("Inverter unreachable, retaining last known values: %s", e)
+                return self._last_data
+            raise
+
+        # For any sensor that came back None, keep the last known value
+        if self._last_data:
+            for key, val in result.items():
+                if val is None and self._last_data.get(key) is not None:
+                    result[key] = self._last_data[key]
+
+        self._last_data = result
+        return result
 
     def _fetch(self) -> dict:
         reg_map: dict[int, int] = {}
