@@ -20,6 +20,18 @@ DEFAULT_HOST = "192.168.1.1"
 DEFAULT_PORT = 5743
 DEFAULT_SLAVE = 252
 DEFAULT_SCAN_INTERVAL = 5
+CONF_EXPERT_MODE = "expert_mode"
+
+WORKING_MODES: dict[str, int] = {
+    "General":            0x0101,
+    "Economic":           0x0102,
+    "UPS":                0x0103,
+    "Off-grid":           0x0200,
+    "EMS AC Control":     0x0301,
+    "EMS General":        0x0302,
+    "EMS Battery Control":0x0303,
+    "EMS Off-grid":       0x0404,
+}
 
 
 @dataclass(frozen=True, kw_only=True)

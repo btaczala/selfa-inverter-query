@@ -2,8 +2,21 @@ import argparse
 import socket
 import struct
 
+WORKING_MODES = {
+    "general":      0x0101,
+    "economic":     0x0102,
+    "ups":          0x0103,
+    "off-grid":     0x0200,
+    "ems-ac":       0x0301,
+    "ems-general":  0x0302,
+    "ems-battery":  0x0303,
+    "ems-offgrid":  0x0404,
+}
+
 parser = argparse.ArgumentParser()
 parser.add_argument("--ip", default="192.168.1.1")
+parser.add_argument("--set-mode", choices=WORKING_MODES.keys(), metavar="MODE",
+                    help=f"Set working mode. Choices: {', '.join(WORKING_MODES)}")
 args = parser.parse_args()
 
 HOST = args.ip
@@ -18,6 +31,15 @@ def crc16(data: bytes) -> int:
         for _ in range(8):
             crc = (crc >> 1) ^ 0xA001 if crc & 1 else crc >> 1
     return crc
+
+
+def write_register(sock: socket.socket, register: int, value: int) -> None:
+    req = struct.pack(">BBHH", SLAVE, 0x06, register, value)
+    req += struct.pack("<H", crc16(req))
+    sock.sendall(req)
+    resp = sock.recv(256)
+    if resp[1] == 0x86:
+        raise RuntimeError(f"Modbus write exception: code {resp[2]:#x}")
 
 
 def read_registers(sock: socket.socket, start: int, count: int) -> list[int]:
@@ -57,6 +79,11 @@ with socket.create_connection((HOST, PORT), timeout=5) as sock:
     export_limit_regs = read_registers(sock, 25100, 4)  # 25100: switch, 25103: limit %
     max_grid_regs = read_registers(sock, 50009, 1)      # max grid power (kVA)
     working_mode_regs = read_registers(sock, 50000, 1)  # working mode
+    if args.set_mode:
+        new_value = WORKING_MODES[args.set_mode]
+        write_register(sock, 50000, new_value)
+        print(f"Set working mode to {args.set_mode} ({new_value:#06x})")
+        working_mode_regs = read_registers(sock, 50000, 1)  # re-read to confirm
 
 pv_kw = u32(pv_regs) / 1000
 grid_kw = i32(grid_regs) / 1000
@@ -72,18 +99,9 @@ l2_a = phase_regs[3] / 10
 l3_v = phase_regs[4] / 10
 l3_a = phase_regs[5] / 10
 
-WORKING_MODES = {
-    0x0101: "General",
-    0x0102: "Economic",
-    0x0103: "UPS",
-    0x0200: "Off-grid",
-    0x0301: "EMS AC Control",
-    0x0302: "EMS General",
-    0x0303: "EMS Battery Control",
-    0x0404: "EMS Off-grid",
-}
+WORKING_MODES_DISPLAY = {v: k.title() for k, v in WORKING_MODES.items()}
 working_mode_raw = working_mode_regs[0]
-working_mode = WORKING_MODES.get(working_mode_raw, f"Unknown ({working_mode_raw:#06x})")
+working_mode = WORKING_MODES_DISPLAY.get(working_mode_raw, f"Unknown ({working_mode_raw:#06x})")
 
 export_limit_on = export_limit_regs[0]           # 25100: 0=OFF, 1=ON
 export_limit_pct = export_limit_regs[3] / 1000   # 25103: 0.0-100.0%

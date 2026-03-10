@@ -92,6 +92,18 @@ class SelfaCoordinator(DataUpdateCoordinator):
         self.firmware_version: str = "unknown"
         self._last_data: dict = {}
 
+    async def async_write_register(self, register: int, value: int) -> None:
+        await self.hass.async_add_executor_job(self._write_register, register, value)
+
+    def _write_register(self, register: int, value: int) -> None:
+        with socket.create_connection((self.host, self.port), timeout=10) as sock:
+            req = struct.pack(">BBHH", self.slave, 0x06, register, value)
+            req += struct.pack("<H", _crc16(req))
+            sock.sendall(req)
+            resp = sock.recv(8)
+            if resp[1] == 0x86:
+                raise RuntimeError(f"Modbus write exception at reg {register}: code {resp[2]:#x}")
+
     async def _async_update_data(self) -> dict:
         try:
             result = await self.hass.async_add_executor_job(self._fetch)
