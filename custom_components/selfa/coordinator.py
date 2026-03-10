@@ -147,4 +147,13 @@ class SelfaCoordinator(DataUpdateCoordinator):
                 _LOGGER.debug("Failed to decode %s: %s", sensor.key, e)
                 result[sensor.key] = None
 
+        # Compute home power: P_load = P_pv + P_bat - P_grid_meter
+        pv = result.get("pv_input_power")
+        bat = result.get("battery_power")
+        grid = result.get("grid_meter_power")
+        if pv is not None and bat is not None and grid is not None:
+            result["home_power"] = round(pv + bat - grid, 6)
+        else:
+            result["home_power"] = None
+
         return result
