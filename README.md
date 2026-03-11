@@ -21,23 +21,28 @@ Home Assistant custom integration and data bridge for SELFA SFH hybrid inverters
 
 All sensors appear under a single **SELFA Inverter** device:
 
-| Sensor | Unit | Description |
-|--------|------|-------------|
-| Home Power | kW | Actual home consumption (PV + Battery − Grid) |
-| Inverter AC Power | kW | Total AC output power of the inverter |
-| PV Input Power | kW | Combined PV input |
-| PV1 / PV2 Power | kW | Per-string PV power |
-| PV1 / PV2 Voltage | V | Per-string PV voltage |
-| Grid Meter Power | kW | Positive = export, negative = import |
-| Grid Frequency | Hz | |
-| L1 / L2 / L3 Voltage | V | Per-phase grid voltage |
-| L1 / L2 / L3 Current | A | Per-phase grid current |
-| Battery Power | kW | Positive = discharging, negative = charging |
-| Battery Voltage / Current | V / A | |
-| Battery SOC / SOH | % | State of charge / health |
-| BMS Temperature | °C | |
-| Inverter Temperature | °C | |
-| Daily / Total energy | kWh | PV, grid injection/purchase, battery charge/discharge, load |
+| Entity | Type | Unit | Description |
+|--------|------|------|-------------|
+| Home Power | Sensor | kW | Actual home consumption (PV + Battery − Grid) |
+| Inverter AC Power | Sensor | kW | Total AC output power of the inverter |
+| PV Input Power | Sensor | kW | Combined PV input |
+| PV1 / PV2 Power | Sensor | kW | Per-string PV power |
+| PV1 / PV2 Voltage | Sensor | V | Per-string PV voltage |
+| Grid Meter Power | Sensor | kW | Positive = export, negative = import |
+| Grid Frequency | Sensor | Hz | |
+| L1 / L2 / L3 Voltage | Sensor | V | Per-phase grid voltage |
+| L1 / L2 / L3 Current | Sensor | A | Per-phase grid current |
+| Battery Power | Sensor | kW | Positive = discharging, negative = charging |
+| Battery Voltage / Current | Sensor | V / A | |
+| Battery SOC / SOH | Sensor | % | State of charge / health |
+| BMS Temperature | Sensor | °C | |
+| Inverter Temperature | Sensor | °C | |
+| Daily / Total energy | Sensor | kWh | PV, grid injection/purchase, battery charge/discharge, load |
+| Working Mode | Select | — | Switch operating mode — **[Expert Mode only](#expert-mode)** |
+| Export Limit | Switch | — | Enable/disable grid export limiting — **[Expert Mode only](#expert-mode)** |
+| Export Limit Value | Number | kW | Maximum power exported to the grid — **[Expert Mode only](#expert-mode)** |
+| Import Limit | Switch | — | Enable/disable grid import limiting — **[Expert Mode only](#expert-mode)** |
+| Import Limit Value | Number | kVA | Maximum power drawn from the grid — **[Expert Mode only](#expert-mode)** |
 
 ### Working Modes
 
@@ -52,16 +57,24 @@ The inverter supports several operating modes, selectable via the app or via Hom
 
 ### Expert Mode
 
-Expert mode unlocks a **Working Mode** select entity in Home Assistant that lets you switch the inverter's operating mode directly from HA (e.g. via automations or the dashboard).
+Expert mode unlocks advanced control entities that write directly to the inverter:
 
-> **Warning:** Changing the working mode writes directly to the inverter over Modbus. Selecting an incorrect mode (e.g. Off-grid while the grid is connected) may affect your installation. Only enable this if you understand what each mode does.
+| Entity | Type | Description |
+|--------|------|-------------|
+| Working Mode | Select | Switch operating mode (General, Economic, UPS, Off-grid) |
+| Export Limit | Switch + Number | Enable/disable and set the maximum power exported to the grid (kW) |
+| Import Limit | Switch + Number | Enable/disable and set the maximum power drawn from the grid (kVA) |
+
+> **Warning:** These controls write directly to the inverter over Modbus. Incorrect settings may affect your installation, battery, or grid connection. Only enable Expert Mode if you understand what each setting does. The author takes no responsibility for any resulting damage.
+
+Changes made in the SELFA app are reflected in Home Assistant automatically within the next poll cycle (default: 5 seconds).
 
 To enable:
 1. Go to **Settings → Devices & Services → SELFA Inverter → Configure**
 2. Toggle **Expert Mode** on and click **Submit**
-3. The integration reloads and a **Working Mode** select entity becomes available under the SELFA Inverter device
+3. The integration reloads and the expert entities become available under the SELFA Inverter device
 
-To disable, repeat the steps above and toggle Expert Mode off. The select entity will be removed on reload.
+To disable, repeat the steps above and toggle Expert Mode off. The entities will be removed on reload.
 
 ### Protocol
 
