@@ -1,0 +1,34 @@
+name: CI
+
+on:
+  pull_request:
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install ruff
+        run: pip install ruff
+
+      - name: Lint
+        run: ruff check custom_components/
+
+      - name: Validate manifest
+        run: |
+          python - <<'EOF'
+          import json, sys
+          with open("custom_components/selfa/manifest.json") as f:
+              data = json.load(f)
+          for key in ("domain", "name", "version", "config_flow", "iot_class"):
+              if key not in data:
+                  print(f"manifest.json missing required key: {key}")
+                  sys.exit(1)
+          print(f"manifest.json OK — version {data['version']}")
+          EOF
