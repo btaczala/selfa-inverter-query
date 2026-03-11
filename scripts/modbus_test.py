@@ -17,11 +17,32 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--ip", default="192.168.1.1")
 parser.add_argument("--set-mode", choices=WORKING_MODES.keys(), metavar="MODE",
                     help=f"Set working mode. Choices: {', '.join(WORKING_MODES)}")
+
+# Export limit
+export_grp = parser.add_argument_group("export limit")
+export_grp.add_argument("--export-limit-on",  action="store_true", help="Enable export limit")
+export_grp.add_argument("--export-limit-off", action="store_true", help="Disable export limit")
+export_grp.add_argument("--set-export-limit", type=float, metavar="PCT",
+                        help="Set export limit percentage (0–100)")
+
+# Import limit
+import_grp = parser.add_argument_group("import limit")
+import_grp.add_argument("--import-limit-on",  action="store_true", help="Enable import limit")
+import_grp.add_argument("--import-limit-off", action="store_true", help="Disable import limit")
+import_grp.add_argument("--set-import-limit", type=float, metavar="PCT",
+                        help="Set import limit percentage (0–100)")
+
 args = parser.parse_args()
 
 HOST = args.ip
 PORT = 5743
 SLAVE = 0xFC
+
+# Known limit registers
+REG_EXPORT_ENABLE = 25100
+REG_EXPORT_VALUE  = 25103
+REG_IMPORT_VALUE  = 50009   # Max Grid Power / import limit (kVA, scale 0.1)
+REG_IMPORT_ENABLE = 50007   # confirmed: 1=ON, 0=OFF
 
 
 def crc16(data: bytes) -> int:
@@ -69,58 +90,104 @@ def i16(reg: int) -> int:
 
 
 with socket.create_connection((HOST, PORT), timeout=5) as sock:
-    pv_regs = read_registers(sock, 11028, 2)
-    grid_regs = read_registers(sock, 11000, 2)
-    ac_regs = read_registers(sock, 11016, 2)       # P_AC: inverter AC output
-    energy_total_regs = read_registers(sock, 11020, 2)  # Energy-total (kWh, not power)
-    phase_regs = read_registers(sock, 11009, 6)   # 11009-11014: L1-L3 V+I
-    battery_regs = read_registers(sock, 30258, 2)
+    pv_regs           = read_registers(sock, 11028, 2)
+    grid_regs         = read_registers(sock, 11000, 2)
+    ac_regs           = read_registers(sock, 11016, 2)
+    energy_total_regs = read_registers(sock, 11020, 2)
+    phase_regs        = read_registers(sock, 11009, 6)
+    battery_regs      = read_registers(sock, 30258, 2)
     battery_brand_regs = read_registers(sock, 52500, 2)
-    export_limit_regs = read_registers(sock, 25100, 4)  # 25100: switch, 25103: limit %
-    max_grid_regs = read_registers(sock, 50009, 1)      # max grid power (kVA)
-    working_mode_regs = read_registers(sock, 50000, 1)  # working mode
+    working_mode_regs = read_registers(sock, 50000, 1)
+
+    # Export limit area (confirmed)
+    limit_regs  = read_registers(sock, 25100, 20)   # 25100–25119
+    # Import limit area — 50009 is the value; scan nearby for enable toggle
+    import_regs = read_registers(sock, 50005, 10)   # 50005–50014
+
+    # --- writes ---
     if args.set_mode:
         new_value = WORKING_MODES[args.set_mode]
         write_register(sock, 50000, new_value)
         print(f"Set working mode to {args.set_mode} ({new_value:#06x})")
-        working_mode_regs = read_registers(sock, 50000, 1)  # re-read to confirm
+        working_mode_regs = read_registers(sock, 50000, 1)
 
-pv_kw = u32(pv_regs) / 1000
+    if args.export_limit_on:
+        write_register(sock, REG_EXPORT_ENABLE, 1)
+        print("Export limit: enabled")
+    if args.export_limit_off:
+        write_register(sock, REG_EXPORT_ENABLE, 0)
+        print("Export limit: disabled")
+    if args.set_export_limit is not None:
+        raw = int(args.set_export_limit * 1000)
+        write_register(sock, REG_EXPORT_VALUE, raw)
+        print(f"Export limit value set to {args.set_export_limit:.1f}%")
+
+    if args.import_limit_on:
+        write_register(sock, REG_IMPORT_ENABLE, 1)
+        print(f"Import limit: enabled  (reg {REG_IMPORT_ENABLE} — unconfirmed)")
+    if args.import_limit_off:
+        write_register(sock, REG_IMPORT_ENABLE, 0)
+        print(f"Import limit: disabled  (reg {REG_IMPORT_ENABLE} — unconfirmed)")
+    if args.set_import_limit is not None:
+        raw = int(args.set_import_limit * 10)   # kVA, scale 0.1
+        write_register(sock, REG_IMPORT_VALUE, raw)
+        print(f"Import limit value set to {args.set_import_limit:.1f} kVA  (reg {REG_IMPORT_VALUE})")
+
+    # re-read after any writes
+    if any([args.export_limit_on, args.export_limit_off, args.set_export_limit,
+            args.import_limit_on, args.import_limit_off, args.set_import_limit]):
+        limit_regs  = read_registers(sock, 25100, 20)
+        import_regs = read_registers(sock, 50005, 10)
+
+# --- decode ---
+pv_kw  = u32(pv_regs) / 1000
 grid_kw = i32(grid_regs) / 1000
-ac_kw = i32(ac_regs) / 1000
+ac_kw  = i32(ac_regs) / 1000
 energy_total_kwh = u32(energy_total_regs) / 10
 battery_kw = i32(battery_regs) / 1000
 home_kw = pv_kw + battery_kw - grid_kw
 
-l1_v = phase_regs[0] / 10
-l1_a = phase_regs[1] / 10
-l2_v = phase_regs[2] / 10
-l2_a = phase_regs[3] / 10
-l3_v = phase_regs[4] / 10
-l3_a = phase_regs[5] / 10
+l1_v, l1_a = phase_regs[0] / 10, phase_regs[1] / 10
+l2_v, l2_a = phase_regs[2] / 10, phase_regs[3] / 10
+l3_v, l3_a = phase_regs[4] / 10, phase_regs[5] / 10
 
 WORKING_MODES_DISPLAY = {v: k.title() for k, v in WORKING_MODES.items()}
 working_mode_raw = working_mode_regs[0]
 working_mode = WORKING_MODES_DISPLAY.get(working_mode_raw, f"Unknown ({working_mode_raw:#06x})")
 
-export_limit_on = export_limit_regs[0]           # 25100: 0=OFF, 1=ON
-export_limit_pct = export_limit_regs[3] / 1000   # 25103: 0.0-100.0%
-max_grid_kva = max_grid_regs[0] / 10             # 50009: kVA
-
-battery_brand = battery_brand_regs[0]
+battery_brand    = battery_brand_regs[0]
 battery_protocol = battery_brand_regs[1]
 
+export_enable = limit_regs[REG_EXPORT_ENABLE - 25100]
+export_value  = limit_regs[REG_EXPORT_VALUE  - 25100] / 10     # kW
+IMPORT_BASE   = 50005
+import_enable = import_regs[REG_IMPORT_ENABLE - IMPORT_BASE]
+import_value  = import_regs[REG_IMPORT_VALUE  - IMPORT_BASE] / 10   # kVA, scale 0.1
+
+# --- output ---
 print(f"PV Input:         {pv_kw:.3f} kW")
 print(f"Grid Meter:       {grid_kw:+.3f} kW  ({'export' if grid_kw > 0 else 'import'})")
 print(f"Battery:          {battery_kw:+.3f} kW  ({'discharge' if battery_kw > 0 else 'charge'})")
 print(f"Inverter AC:      {ac_kw:.3f} kW  (11016, P_AC)")
 print(f"Home Power:       {home_kw:.3f} kW  (PV + Bat - Grid)")
-print(f"Energy Total:     {energy_total_kwh:.1f} kWh  (11020, lifetime counter — not power)")
+print(f"Energy Total:     {energy_total_kwh:.1f} kWh  (11020)")
 print(f"L1:               {l1_v:.1f} V  {l1_a:.1f} A")
 print(f"L2:               {l2_v:.1f} V  {l2_a:.1f} A")
 print(f"L3:               {l3_v:.1f} V  {l3_a:.1f} A")
 print(f"Working Mode:     {working_mode}")
-print(f"Export Limit:     {'ON' if export_limit_on else 'OFF'}  {export_limit_pct:.1f}%  (25100/25103)")
-print(f"Max Grid Power:   {max_grid_kva:.1f} kVA  (50009)")
+print(f"Export Limit:     {'ON' if export_enable else 'OFF'}  {export_value:.1f} kW"
+      f"  (enable={REG_EXPORT_ENABLE}, value={REG_EXPORT_VALUE})")
+print(f"Import Limit:     {'ON' if import_enable else 'OFF'}  {import_value:.1f} kVA"
+      f"  (enable={REG_IMPORT_ENABLE}?, value={REG_IMPORT_VALUE})")
 print(f"Battery Brand:    {battery_brand}")
 print(f"Battery Protocol: {battery_protocol}")
+
+print()
+print("-- raw export limit registers 25100–25119 --")
+for i, val in enumerate(limit_regs):
+    print(f"  {25100 + i}: {val}  (0x{val:04x})")
+
+print()
+print("-- raw import limit registers 50005–50014 (toggle import limit in app to identify enable reg) --")
+for i, val in enumerate(import_regs):
+    print(f"  {50005 + i}: {val}  (0x{val:04x})")
