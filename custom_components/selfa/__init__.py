@@ -5,7 +5,7 @@ from homeassistant.core import HomeAssistant
 from .const import DOMAIN
 from .coordinator import SelfaCoordinator
 
-PLATFORMS = [Platform.SENSOR, Platform.SELECT]
+PLATFORMS = [Platform.SENSOR, Platform.SELECT, Platform.SWITCH, Platform.NUMBER]
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:

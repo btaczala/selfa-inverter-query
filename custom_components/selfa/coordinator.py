@@ -36,8 +36,9 @@ REGISTER_BATCHES = [
     (30254, 6),  # battery V, I, mode, power (30254-30259)
     (31000, 9),  # daily energy (31000-31008)
     (31102, 18),  # total energy (31102-31119)
+    (25100, 4),  # export limit: enable (25100), value (25103)
     (33000, 4),  # SOC, SOH, BMS status, BMS temp (33000-33003)
-    (50000, 1),  # working mode (50000)
+    (50000, 10), # working mode (50000), import limit enable (50007), value (50009)
     (52500, 1),  # battery brand (52500)
 ]
 
@@ -324,5 +325,11 @@ class SelfaCoordinator(DataUpdateCoordinator):
             result["home_power"] = round(pv + bat - grid, 6)
         else:
             result["home_power"] = None
+
+        # Export / import limits (read by switch + number entities)
+        result["export_limit_enable"] = bool(reg_map.get(25100, 0))
+        result["export_limit_value"]  = reg_map.get(25103, 0) * 0.1     # kW (raw × 0.1)
+        result["import_limit_enable"] = bool(reg_map.get(50007, 0))
+        result["import_limit_value"]  = reg_map.get(50009, 0) * 0.1     # kVA (raw × 0.1)
 
         return result
