@@ -1,0 +1,29 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "SELFA Inverter",
+        "data": {
+          "host": "Host",
+          "port": "Port",
+          "slave": "Slave address"
+        }
+      }
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "SELFA Inverter options",
+        "data": {
+          "breaker_type": "Main breaker rating",
+          "expert_mode": "Expert Mode"
+        },
+        "data_description": {
+          "breaker_type": "Select your main circuit breaker rating. This limits the maximum import power that can be configured (16 A → 11 kVA, 20 A → 13.8 kVA, 32 A → 22 kVA).",
+          "expert_mode": "Enables advanced controls: working mode selector, export limit, and import limit. These write directly to the inverter over Modbus — use with caution."
+        }
+      }
+    }
+  }
+}

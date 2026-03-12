@@ -21,6 +21,14 @@ DEFAULT_PORT = 5743
 DEFAULT_SLAVE = 252
 DEFAULT_SCAN_INTERVAL = 5
 CONF_EXPERT_MODE = "expert_mode"
+CONF_BREAKER = "breaker_type"
+
+# Maximum import power (kVA) per breaker rating (3-phase, 400 V)
+BREAKER_LIMITS: dict[str, float] = {
+    "16A": 11.0,
+    "20A": 13.8,
+    "32A": 22.0,
+}
 
 WORKING_MODES: dict[str, int] = {
     "General":            0x0101,
@@ -55,6 +63,20 @@ SENSORS: tuple[SelfaSensorDescription, ...] = (
         name="CRC Error Count",
         register=0,  # virtual — value injected by coordinator
         state_class=SensorStateClass.TOTAL_INCREASING,
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
+    SelfaSensorDescription(
+        key="breaker_type",
+        name="Breaker Type",
+        register=0,  # virtual — value injected by coordinator
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
+    SelfaSensorDescription(
+        key="max_import_kva",
+        name="Max Import Power",
+        register=0,  # virtual — value injected by coordinator
+        native_unit_of_measurement="kVA",
+        state_class=SensorStateClass.MEASUREMENT,
         entity_category=EntityCategory.DIAGNOSTIC,
     ),
     SelfaSensorDescription(

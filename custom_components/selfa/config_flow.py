@@ -2,7 +2,7 @@ import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry, ConfigFlow, ConfigFlowResult, OptionsFlow
 from homeassistant.core import callback
 
-from .const import DOMAIN, DEFAULT_HOST, DEFAULT_PORT, DEFAULT_SLAVE, CONF_EXPERT_MODE
+from .const import DOMAIN, DEFAULT_HOST, DEFAULT_PORT, DEFAULT_SLAVE, CONF_EXPERT_MODE, CONF_BREAKER, BREAKER_LIMITS
 
 STEP_SCHEMA = vol.Schema({
     vol.Required("host", default=DEFAULT_HOST): str,
@@ -31,10 +31,12 @@ class SelfaOptionsFlow(OptionsFlow):
         if user_input is not None:
             return self.async_create_entry(data=user_input)
 
-        current = self.config_entry.options.get(CONF_EXPERT_MODE, False)
+        current_expert = self.config_entry.options.get(CONF_EXPERT_MODE, False)
+        current_breaker = self.config_entry.options.get(CONF_BREAKER, "16A")
         return self.async_show_form(
             step_id="init",
             data_schema=vol.Schema({
-                vol.Required(CONF_EXPERT_MODE, default=current): bool,
+                vol.Required(CONF_BREAKER, default=current_breaker): vol.In(list(BREAKER_LIMITS)),
+                vol.Required(CONF_EXPERT_MODE, default=current_expert): bool,
             }),
         )

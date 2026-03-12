@@ -147,6 +147,8 @@ class SelfaCoordinator(DataUpdateCoordinator):
         self.slave = slave
         self.serial_number: str = "unknown"
         self.firmware_version: str = "unknown"
+        self.breaker_type: str = "unknown"
+        self.max_import_kva: float = 0.0
         self._last_data: dict = {}
         self._pending: dict = {}  # values waiting for confirmation (spike gate)
         self.crc_error_count: int = 0
@@ -298,7 +300,9 @@ class SelfaCoordinator(DataUpdateCoordinator):
 
         result: dict = {
             "serial_number": self.serial_number,
-            "crc_error_count": self.crc_error_count
+            "crc_error_count": self.crc_error_count,
+            "breaker_type": self.breaker_type,
+            "max_import_kva": self.max_import_kva,
         }
         for sensor in SENSORS:
             if sensor.register == 0:

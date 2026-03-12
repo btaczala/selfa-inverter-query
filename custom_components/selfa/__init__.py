@@ -2,7 +2,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 
-from .const import DOMAIN
+from .const import DOMAIN, CONF_BREAKER, BREAKER_LIMITS
 from .coordinator import SelfaCoordinator
 
 PLATFORMS = [Platform.SENSOR, Platform.SELECT, Platform.SWITCH, Platform.NUMBER]
@@ -15,6 +15,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         port=entry.data["port"],
         slave=entry.data["slave"],
     )
+    breaker = entry.options.get(CONF_BREAKER, "16A")
+    coordinator.breaker_type = breaker
+    coordinator.max_import_kva = BREAKER_LIMITS.get(breaker, 11.0)
     await coordinator.async_config_entry_first_refresh()
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
