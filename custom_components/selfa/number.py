@@ -8,7 +8,9 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN, CONF_EXPERT_MODE
+import dataclasses
+
+from .const import DOMAIN, CONF_EXPERT_MODE, CONF_BREAKER, BREAKER_LIMITS
 from .coordinator import SelfaCoordinator
 
 
@@ -52,8 +54,17 @@ async def async_setup_entry(
 ) -> None:
     if not entry.options.get(CONF_EXPERT_MODE, False):
         return
+
     coordinator: SelfaCoordinator = hass.data[DOMAIN][entry.entry_id]
-    async_add_entities(SelfaNumber(coordinator, desc) for desc in NUMBERS)
+    breaker = entry.options.get(CONF_BREAKER, "16A")
+    max_import = BREAKER_LIMITS.get(breaker, 11.0)
+
+    entities = []
+    for desc in NUMBERS:
+        if desc.key == "import_limit_value":
+            desc = dataclasses.replace(desc, native_max_value=max_import)
+        entities.append(SelfaNumber(coordinator, desc))
+    async_add_entities(entities)
 
 
 class SelfaNumber(CoordinatorEntity[SelfaCoordinator], NumberEntity):
