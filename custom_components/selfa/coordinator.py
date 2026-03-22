@@ -39,6 +39,7 @@ REGISTER_BATCHES = [
     (25100, 4),  # export limit: enable (25100), value (25103)
     (33000, 4),  # SOC, SOH, BMS status, BMS temp (33000-33003)
     (50000, 10), # working mode (50000), import limit enable (50007), value (50009)
+    (50207, 1),  # EMS battery power scheduling (50207)
     (52500, 1),  # battery brand (52500)
 ]
 
