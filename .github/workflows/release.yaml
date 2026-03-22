@@ -45,10 +45,12 @@ jobs:
             RANGE="${LAST_TAG}..HEAD"
           fi
 
-          NOTES=$(git log --format="%B" $RANGE \
-            | grep -oP '(?<=RelNotes: ).*' \
-            | sed 's/^/- /' \
-            || true)
+          NOTES=$(git log --format="%B" $RANGE | awk '
+            /^RelNotes: / { sub(/^RelNotes: /, "- "); print; next }
+            /^RelNotes:$/  { capture=1; next }
+            capture && /^[[:space:]]*$/ { capture=0; next }
+            capture { print }
+          ' || true)
 
           if [ -z "$NOTES" ]; then
             NOTES="_No release notes in commit messages._"

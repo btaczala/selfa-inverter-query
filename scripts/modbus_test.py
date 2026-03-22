@@ -98,6 +98,8 @@ with socket.create_connection((HOST, PORT), timeout=5) as sock:
     battery_regs      = read_registers(sock, 30258, 2)
     battery_brand_regs = read_registers(sock, 52500, 2)
     working_mode_regs = read_registers(sock, 50000, 1)
+    batt_power_sched_regs = read_registers(sock, 50207, 1)
+    bms_status_regs = read_registers(sock, 53508, 1)
 
     # Export limit area (confirmed)
     limit_regs  = read_registers(sock, 25100, 20)   # 25100–25119
@@ -157,6 +159,13 @@ working_mode = WORKING_MODES_DISPLAY.get(working_mode_raw, f"Unknown ({working_m
 
 battery_brand    = battery_brand_regs[0]
 battery_protocol = battery_brand_regs[1]
+batt_power_sched_kw = i16(batt_power_sched_regs[0]) / 100
+bms_status_raw = bms_status_regs[0]
+bms_discharge_ongrid  = bool(bms_status_raw & (1 << 9))
+bms_discharge_offgrid = bool(bms_status_raw & (1 << 8))
+bms_charge_cmd        = bool(bms_status_raw & (1 << 10))
+bms_force_charge      = bool(bms_status_raw & (1 << 11))
+bms_running_status    = bms_status_raw & 0xFF
 
 export_enable = limit_regs[REG_EXPORT_ENABLE - 25100]
 export_value  = limit_regs[REG_EXPORT_VALUE  - 25100] / 10     # kW
@@ -181,13 +190,12 @@ print(f"Import Limit:     {'ON' if import_enable else 'OFF'}  {import_value:.1f}
       f"  (enable={REG_IMPORT_ENABLE}?, value={REG_IMPORT_VALUE})")
 print(f"Battery Brand:    {battery_brand}")
 print(f"Battery Protocol: {battery_protocol}")
+print(f"Batt Pwr Sched:   {batt_power_sched_kw:+.2f} kW  (50207, +discharge/-charge)")
+BMS_RUNNING = {0: "Sleep", 1: "Charge", 2: "Discharge", 3: "Standby", 4: "Fault"}
+print(f"BMS Status:       0x{bms_status_raw:04x}  (53508)"
+      f"  discharge_ongrid={int(bms_discharge_ongrid)}"
+      f"  discharge_offgrid={int(bms_discharge_offgrid)}"
+      f"  charge={int(bms_charge_cmd)}"
+      f"  force_charge={int(bms_force_charge)}"
+      f"  running={BMS_RUNNING.get(bms_running_status, bms_running_status)}")
 
-print()
-print("-- raw export limit registers 25100–25119 --")
-for i, val in enumerate(limit_regs):
-    print(f"  {25100 + i}: {val}  (0x{val:04x})")
-
-print()
-print("-- raw import limit registers 50005–50014 (toggle import limit in app to identify enable reg) --")
-for i, val in enumerate(import_regs):
-    print(f"  {50005 + i}: {val}  (0x{val:04x})")
