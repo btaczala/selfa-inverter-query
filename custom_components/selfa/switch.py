@@ -27,6 +27,11 @@ SWITCHES: tuple[SelfaSwitchDescription, ...] = (
         name="Import Limit",
         register=50007,
     ),
+    SelfaSwitchDescription(
+        key="battery_low_soc_protection",
+        name="Battery Low SOC Protection",
+        register=52502,
+    ),
 )
 
 

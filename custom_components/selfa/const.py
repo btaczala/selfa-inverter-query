@@ -384,6 +384,15 @@ SENSORS: tuple[SelfaSensorDescription, ...] = (
         state_class=SensorStateClass.MEASUREMENT,
     ),
     SelfaSensorDescription(
+        key="battery_low_soc",
+        name="Battery Low SOC Limit",
+        register=52503,
+        data_type="uint16",
+        scale=0.1,
+        native_unit_of_measurement=PERCENTAGE,
+        state_class=SensorStateClass.MEASUREMENT,
+    ),
+    SelfaSensorDescription(
         key="battery_power_sched",
         name="Battery Power Scheduling",
         register=50207,

@@ -32,6 +32,9 @@ import_grp.add_argument("--import-limit-off", action="store_true", help="Disable
 import_grp.add_argument("--set-import-limit", type=float, metavar="PCT",
                         help="Set import limit percentage (0–100)")
 
+parser.add_argument("--set-batt-sched", type=float, metavar="KW",
+                    help="Set battery power schedule in kW (+discharge/-charge, 0=off)")
+
 args = parser.parse_args()
 
 HOST = args.ip
@@ -39,10 +42,12 @@ PORT = 5743
 SLAVE = 0xFC
 
 # Known limit registers
-REG_EXPORT_ENABLE = 25100
-REG_EXPORT_VALUE  = 25103
-REG_IMPORT_VALUE  = 50009   # Max Grid Power / import limit (kVA, scale 0.1)
-REG_IMPORT_ENABLE = 50007   # confirmed: 1=ON, 0=OFF
+REG_EXPORT_ENABLE    = 25100
+REG_EXPORT_VALUE     = 25103
+REG_IMPORT_VALUE     = 50009   # Max Grid Power / import limit (kVA, scale 0.1)
+REG_IMPORT_ENABLE    = 50007   # confirmed: 1=ON, 0=OFF
+REG_LOW_SOC_ENABLE   = 52502   # On-grid SOC protection: 0=OFF, 1=ON
+REG_LOW_SOC_VALUE    = 52503   # On-grid Battery End SOC (%, raw × 0.1, accuracy 1000)
 
 
 def crc16(data: bytes) -> int:
@@ -100,6 +105,7 @@ with socket.create_connection((HOST, PORT), timeout=5) as sock:
     working_mode_regs = read_registers(sock, 50000, 1)
     batt_power_sched_regs = read_registers(sock, 50207, 1)
     bms_status_regs = read_registers(sock, 53508, 1)
+    low_soc_regs    = read_registers(sock, REG_LOW_SOC_ENABLE, 2)  # 52502–52503
 
     # Export limit area (confirmed)
     limit_regs  = read_registers(sock, 25100, 20)   # 25100–25119
@@ -135,11 +141,18 @@ with socket.create_connection((HOST, PORT), timeout=5) as sock:
         write_register(sock, REG_IMPORT_VALUE, raw)
         print(f"Import limit value set to {args.set_import_limit:.1f} kVA  (reg {REG_IMPORT_VALUE})")
 
+    if args.set_batt_sched is not None:
+        raw = int(args.set_batt_sched * 100) & 0xFFFF  # signed i16, scale 0.01 kW
+        write_register(sock, 50207, raw)
+        print(f"Battery schedule set to {args.set_batt_sched:+.2f} kW  (reg 50207 = {raw})")
+        batt_power_sched_regs = read_registers(sock, 50207, 1)
+
     # re-read after any writes
     if any([args.export_limit_on, args.export_limit_off, args.set_export_limit,
             args.import_limit_on, args.import_limit_off, args.set_import_limit]):
         limit_regs  = read_registers(sock, 25100, 20)
         import_regs = read_registers(sock, 50005, 10)
+        low_soc_regs = read_registers(sock, REG_LOW_SOC_ENABLE, 2)
 
 # --- decode ---
 pv_kw  = u32(pv_regs) / 1000
@@ -167,6 +180,9 @@ bms_charge_cmd        = bool(bms_status_raw & (1 << 10))
 bms_force_charge      = bool(bms_status_raw & (1 << 11))
 bms_running_status    = bms_status_raw & 0xFF
 
+low_soc_enable = bool(low_soc_regs[0])
+low_soc_value  = low_soc_regs[1] * 0.1   # %, raw × 0.1
+
 export_enable = limit_regs[REG_EXPORT_ENABLE - 25100]
 export_value  = limit_regs[REG_EXPORT_VALUE  - 25100] / 10     # kW
 IMPORT_BASE   = 50005
@@ -188,6 +204,8 @@ print(f"Export Limit:     {'ON' if export_enable else 'OFF'}  {export_value:.1f}
       f"  (enable={REG_EXPORT_ENABLE}, value={REG_EXPORT_VALUE})")
 print(f"Import Limit:     {'ON' if import_enable else 'OFF'}  {import_value:.1f} kVA"
       f"  (enable={REG_IMPORT_ENABLE}?, value={REG_IMPORT_VALUE})")
+print(f"Low SOC Limit:    {'ON' if low_soc_enable else 'OFF'}  {low_soc_value:.1f} %"
+      f"  (enable={REG_LOW_SOC_ENABLE}, value={REG_LOW_SOC_VALUE})")
 print(f"Battery Brand:    {battery_brand}")
 print(f"Battery Protocol: {battery_protocol}")
 print(f"Batt Pwr Sched:   {batt_power_sched_kw:+.2f} kW  (50207, +discharge/-charge)")

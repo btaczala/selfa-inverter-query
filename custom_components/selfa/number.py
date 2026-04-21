@@ -2,7 +2,7 @@ from dataclasses import dataclass
 
 from homeassistant.components.number import NumberEntity, NumberEntityDescription, NumberMode
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import UnitOfPower
+from homeassistant.const import PERCENTAGE, UnitOfPower
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -19,9 +19,29 @@ class SelfaNumberDescription(NumberEntityDescription):
     register: int = 0
     # Converts a HA value (float) to the raw integer written to Modbus
     raw_from_value: object = None   # callable: value → int
+    # When set, a warning attribute is emitted if the value falls below this threshold
+    caution_below: float | None = None
+    caution_message: str | None = None
 
 
 NUMBERS: tuple[SelfaNumberDescription, ...] = (
+    SelfaNumberDescription(
+        key="battery_low_soc",
+        name="Battery Low SOC Limit",
+        register=52503,
+        native_min_value=0.0,
+        native_max_value=100.0,
+        native_step=0.1,
+        native_unit_of_measurement=PERCENTAGE,
+        mode=NumberMode.BOX,
+        raw_from_value=lambda v: int(v * 10),
+        caution_below=10.0,
+        caution_message=(
+            "WARNING: Values below 10 % are detrimental to battery health "
+            "and may significantly reduce battery lifespan. "
+            "Use with extra caution."
+        ),
+    ),
     SelfaNumberDescription(
         key="battery_power_sched",
         name="Battery Power Scheduling",
@@ -93,6 +113,17 @@ class SelfaNumber(CoordinatorEntity[SelfaCoordinator], NumberEntity):
     @property
     def native_value(self) -> float | None:
         return self.coordinator.data.get(self.entity_description.key)
+
+    @property
+    def extra_state_attributes(self) -> dict | None:
+        desc = self.entity_description
+        if desc.caution_below is None:
+            return None
+        attrs: dict = {"note": f"Values below {desc.caution_below:.0f} % degrade battery health"}
+        value = self.native_value
+        if value is not None and value < desc.caution_below:
+            attrs["caution"] = desc.caution_message
+        return attrs
 
     async def async_set_native_value(self, value: float) -> None:
         raw = self.entity_description.raw_from_value(value)
