@@ -24,3 +24,5 @@ docker/ha-config/*.db
 docker/ha-config/*.db-shm
 docker/ha-config/*.db-wal
 docker/ha-config/.ha_run.lock
+*.pdf
+.claude/settings.local.json
