@@ -39,8 +39,9 @@ REGISTER_BATCHES = [
     (25100, 4),  # export limit: enable (25100), value (25103)
     (33000, 4),  # SOC, SOH, BMS status, BMS temp (33000-33003)
     (50000, 10), # working mode (50000), import limit enable (50007), value (50009)
-    (50207, 1),  # EMS battery power scheduling (50207)
+    (50207, 5),  # EMS battery power scheduling (50207), PV scheduling (50211)
     (52500, 1),  # battery brand (52500)
+    (52502, 2),  # battery SOC protection enable (52502), end SOC (52503)
 ]
 
 
@@ -336,5 +337,8 @@ class SelfaCoordinator(DataUpdateCoordinator):
         result["export_limit_value"]  = reg_map.get(25103, 0) * 0.1     # kW (raw × 0.1)
         result["import_limit_enable"] = bool(reg_map.get(50007, 0))
         result["import_limit_value"]  = reg_map.get(50009, 0) * 0.1     # kVA (raw × 0.1)
+
+        # Battery SOC limits (read by switch + number entities)
+        result["battery_low_soc_protection"] = bool(reg_map.get(52502, 0))
 
         return result
