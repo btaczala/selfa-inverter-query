@@ -1,6 +1,7 @@
 import argparse
 import socket
 import struct
+import time
 
 WORKING_MODES = {
     "general":      0x0101,
@@ -34,6 +35,8 @@ import_grp.add_argument("--set-import-limit", type=float, metavar="PCT",
 
 parser.add_argument("--set-batt-sched", type=float, metavar="KW",
                     help="Set battery power schedule in kW (+discharge/-charge, 0=off)")
+parser.add_argument("--set-pv-sched", type=float, metavar="KW",
+                    help="Set PV power schedule in kW (0=curtail, EMS Battery mode only)")
 
 args = parser.parse_args()
 
@@ -68,17 +71,30 @@ def write_register(sock: socket.socket, register: int, value: int) -> None:
         raise RuntimeError(f"Modbus write exception: code {resp[2]:#x}")
 
 
+def recvall(sock: socket.socket, n: int) -> bytes:
+    data = b""
+    while len(data) < n:
+        chunk = sock.recv(n - len(data))
+        if not chunk:
+            raise RuntimeError("Connection closed before all bytes received")
+        data += chunk
+    return data
+
+
 def read_registers(sock: socket.socket, start: int, count: int) -> list[int]:
     req = struct.pack(">BBHH", SLAVE, 0x03, start, count)
     req += struct.pack("<H", crc16(req))
     sock.sendall(req)
 
-    resp = sock.recv(256)
-    if resp[1] == 0x83:
-        raise RuntimeError(f"Modbus exception: code {resp[2]:#x}")
+    header = recvall(sock, 3)  # slave + fc + byte_count
+    if header[1] == 0x83:
+        code = recvall(sock, 1)[0]
+        raise RuntimeError(f"Modbus exception: code {code:#x}")
 
-    byte_count = resp[2]
-    return [struct.unpack(">H", resp[3 + i * 2 : 5 + i * 2])[0] for i in range(byte_count // 2)]
+    byte_count = header[2]
+    payload = recvall(sock, byte_count + 2)  # data + 2 CRC bytes
+    time.sleep(0.05)
+    return [struct.unpack(">H", payload[i * 2 : i * 2 + 2])[0] for i in range(byte_count // 2)]
 
 
 def u32(regs: list[int]) -> int:
@@ -104,6 +120,7 @@ with socket.create_connection((HOST, PORT), timeout=5) as sock:
     battery_brand_regs = read_registers(sock, 52500, 2)
     working_mode_regs = read_registers(sock, 50000, 1)
     batt_power_sched_regs = read_registers(sock, 50207, 1)
+    pv_power_sched_regs = read_registers(sock, 50211, 1)
     bms_status_regs = read_registers(sock, 53508, 1)
     low_soc_regs    = read_registers(sock, REG_LOW_SOC_ENABLE, 2)  # 52502–52503
 
@@ -147,6 +164,12 @@ with socket.create_connection((HOST, PORT), timeout=5) as sock:
         print(f"Battery schedule set to {args.set_batt_sched:+.2f} kW  (reg 50207 = {raw})")
         batt_power_sched_regs = read_registers(sock, 50207, 1)
 
+    if args.set_pv_sched is not None:
+        raw = int(args.set_pv_sched * 100)
+        write_register(sock, 50211, raw)
+        print(f"PV schedule set to {args.set_pv_sched:.2f} kW  (reg 50211 = {raw})")
+        pv_power_sched_regs = read_registers(sock, 50211, 1)
+
     # re-read after any writes
     if any([args.export_limit_on, args.export_limit_off, args.set_export_limit,
             args.import_limit_on, args.import_limit_off, args.set_import_limit]):
@@ -173,6 +196,7 @@ working_mode = WORKING_MODES_DISPLAY.get(working_mode_raw, f"Unknown ({working_m
 battery_brand    = battery_brand_regs[0]
 battery_protocol = battery_brand_regs[1]
 batt_power_sched_kw = i16(batt_power_sched_regs[0]) / 100
+pv_power_sched_kw   = pv_power_sched_regs[0] / 100
 bms_status_raw = bms_status_regs[0]
 bms_discharge_ongrid  = bool(bms_status_raw & (1 << 9))
 bms_discharge_offgrid = bool(bms_status_raw & (1 << 8))
@@ -189,31 +213,99 @@ IMPORT_BASE   = 50005
 import_enable = import_regs[REG_IMPORT_ENABLE - IMPORT_BASE]
 import_value  = import_regs[REG_IMPORT_VALUE  - IMPORT_BASE] / 10   # kVA, scale 0.1
 
-# --- output ---
-print(f"PV Input:         {pv_kw:.3f} kW")
-print(f"Grid Meter:       {grid_kw:+.3f} kW  ({'export' if grid_kw > 0 else 'import'})")
-print(f"Battery:          {battery_kw:+.3f} kW  ({'discharge' if battery_kw > 0 else 'charge'})")
-print(f"Inverter AC:      {ac_kw:.3f} kW  (11016, P_AC)")
-print(f"Home Power:       {home_kw:.3f} kW  (PV + Bat - Grid)")
-print(f"Energy Total:     {energy_total_kwh:.1f} kWh  (11020)")
-print(f"L1:               {l1_v:.1f} V  {l1_a:.1f} A")
-print(f"L2:               {l2_v:.1f} V  {l2_a:.1f} A")
-print(f"L3:               {l3_v:.1f} V  {l3_a:.1f} A")
-print(f"Working Mode:     {working_mode}")
-print(f"Export Limit:     {'ON' if export_enable else 'OFF'}  {export_value:.1f} kW"
-      f"  (enable={REG_EXPORT_ENABLE}, value={REG_EXPORT_VALUE})")
-print(f"Import Limit:     {'ON' if import_enable else 'OFF'}  {import_value:.1f} kVA"
-      f"  (enable={REG_IMPORT_ENABLE}?, value={REG_IMPORT_VALUE})")
-print(f"Low SOC Limit:    {'ON' if low_soc_enable else 'OFF'}  {low_soc_value:.1f} %"
-      f"  (enable={REG_LOW_SOC_ENABLE}, value={REG_LOW_SOC_VALUE})")
-print(f"Battery Brand:    {battery_brand}")
-print(f"Battery Protocol: {battery_protocol}")
-print(f"Batt Pwr Sched:   {batt_power_sched_kw:+.2f} kW  (50207, +discharge/-charge)")
 BMS_RUNNING = {0: "Sleep", 1: "Charge", 2: "Discharge", 3: "Standby", 4: "Fault"}
-print(f"BMS Status:       0x{bms_status_raw:04x}  (53508)"
-      f"  discharge_ongrid={int(bms_discharge_ongrid)}"
-      f"  discharge_offgrid={int(bms_discharge_offgrid)}"
-      f"  charge={int(bms_charge_cmd)}"
-      f"  force_charge={int(bms_force_charge)}"
-      f"  running={BMS_RUNNING.get(bms_running_status, bms_running_status)}")
+bms_running_label = BMS_RUNNING.get(bms_running_status, str(bms_running_status))
+if bms_force_charge:
+    bms_running_label += " [force charge]"
+
+# --- colours & helpers ---
+R = "\033[0m"
+BOLD = "\033[1m"
+DIM  = "\033[2m"
+
+BLACK  = "\033[30m"
+RED    = "\033[31m"
+GREEN  = "\033[32m"
+YELLOW = "\033[33m"
+BLUE   = "\033[34m"
+CYAN   = "\033[36m"
+
+BRED   = "\033[91m"
+BGREEN = "\033[92m"
+BYELLOW= "\033[93m"
+BBLUE  = "\033[94m"
+BMAGENTA="\033[95m"
+BCYAN  = "\033[96m"
+BWHITE = "\033[97m"
+
+BAR_FULL  = "█"
+BAR_EMPTY = "░"
+BAR_W = 24
+
+
+def bar(value: float, max_val: float, color: str, width: int = BAR_W) -> str:
+    filled = round(min(abs(value) / max_val, 1.0) * width)
+    return color + BAR_FULL * filled + DIM + BAR_EMPTY * (width - filled) + R
+
+
+def on_off(flag: bool) -> str:
+    return f"{BGREEN}ON {R}" if flag else f"{DIM}OFF{R}"
+
+
+def section(title: str) -> None:
+    line = f"{'─' * (44 - len(title))}"
+    print(f"\n{BOLD}{BCYAN}── {title} {line}{R}")
+
+
+def volt_color(v: float) -> str:
+    # EN 50160: 230V ±10% → 207–253V is normal
+    if 207 <= v <= 253:
+        return BGREEN
+    if 195 <= v <= 260:
+        return BYELLOW
+    return BRED
+
+
+# --- output ---
+section("Power Flow")
+PV_MAX   = 12.0
+BAT_MAX  =  5.0
+GRID_MAX =  8.0
+HOME_MAX = 10.0
+
+print(f"  {BYELLOW}PV      {R} {bar(pv_kw,   PV_MAX,   BYELLOW)}  {BYELLOW}{pv_kw:>6.3f} kW{R}")
+
+bat_color = BCYAN if battery_kw < 0 else BYELLOW
+bat_label = "charge" if battery_kw < 0 else "discharge"
+print(f"  {bat_color}Battery {R} {bar(battery_kw, BAT_MAX, bat_color)}  {bat_color}{abs(battery_kw):>6.3f} kW  {bat_label}{R}")
+
+grid_color = BRED if grid_kw < 0 else BGREEN
+grid_label = "import" if grid_kw < 0 else "export"
+print(f"  {grid_color}Grid    {R} {bar(grid_kw,  GRID_MAX, grid_color)}  {grid_color}{abs(grid_kw):>6.3f} kW  {grid_label}{R}")
+
+print(f"  {BWHITE}Home    {R} {bar(home_kw, HOME_MAX, BWHITE)}  {BWHITE}{home_kw:>6.3f} kW{R}")
+print(f"  {DIM}Inv AC  {R} {DIM}{bar(ac_kw,   HOME_MAX, '')}  {ac_kw:>6.3f} kW{R}")
+
+section("Grid Phases")
+CURR_MAX = 16.0
+for label, v, a in [("L1", l1_v, l1_a), ("L2", l2_v, l2_a), ("L3", l3_v, l3_a)]:
+    vc = volt_color(v)
+    print(f"  {BOLD}{label}{R}  {vc}{v:>5.1f} V{R}  {bar(a, CURR_MAX, BBLUE, 16)}  {BBLUE}{a:>4.1f} A{R}")
+
+section("Mode & Controls")
+print(f"  Working Mode   {BOLD}{BCYAN}{working_mode}{R}")
+print(f"  Export Limit   {on_off(export_enable)}  {export_value:.1f} kW")
+print(f"  Import Limit   {on_off(import_enable)}  {import_value:.1f} kVA")
+print(f"  Low SOC Limit  {on_off(low_soc_enable)}  {low_soc_value:.0f} %")
+if working_mode_raw == WORKING_MODES["ems-battery"]:
+    sched_color = BYELLOW if batt_power_sched_kw > 0 else BCYAN
+    print(f"  Batt Sched     {sched_color}{batt_power_sched_kw:>+7.2f} kW{R}  (+discharge / -charge)")
+    print(f"  PV Sched       {BYELLOW}{pv_power_sched_kw:>7.2f} kW{R}  (0 = curtailed)")
+
+section("Diagnostics")
+bms_color = BGREEN if bms_running_status in (1, 2, 3) else DIM
+print(f"  BMS Status     {bms_color}{bms_running_label}{R}")
+print(f"  Energy Total   {energy_total_kwh:.1f} kWh")
+print(f"  {DIM}Battery Brand  {battery_brand}  Protocol {battery_protocol}{R}")
+print()
 

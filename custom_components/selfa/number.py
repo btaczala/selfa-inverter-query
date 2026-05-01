@@ -54,6 +54,17 @@ NUMBERS: tuple[SelfaNumberDescription, ...] = (
         raw_from_value=lambda v: int(v * 100) & 0xFFFF,
     ),
     SelfaNumberDescription(
+        key="pv_power_sched",
+        name="PV Power Scheduling",
+        register=50211,
+        native_min_value=0.0,
+        native_max_value=20.0,
+        native_step=0.1,
+        native_unit_of_measurement=UnitOfPower.KILO_WATT,
+        mode=NumberMode.BOX,
+        raw_from_value=lambda v: int(v * 100),
+    ),
+    SelfaNumberDescription(
         key="export_limit_value",
         name="Export Limit Value",
         register=25103,

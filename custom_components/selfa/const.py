@@ -403,6 +403,16 @@ SENSORS: tuple[SelfaSensorDescription, ...] = (
         state_class=SensorStateClass.MEASUREMENT,
     ),
     SelfaSensorDescription(
+        key="pv_power_sched",
+        name="PV Power Scheduling",
+        register=50211,
+        data_type="uint16",
+        scale=0.01,
+        native_unit_of_measurement=UnitOfPower.KILO_WATT,
+        device_class=SensorDeviceClass.POWER,
+        state_class=SensorStateClass.MEASUREMENT,
+    ),
+    SelfaSensorDescription(
         key="working_mode",
         name="Working Mode",
         register=50000,
