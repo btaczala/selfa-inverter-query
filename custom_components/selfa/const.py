@@ -41,6 +41,14 @@ WORKING_MODES: dict[str, int] = {
     "EMS Off-grid":       0x0404,
 }
 
+# Register 50210 — Priority of Power Output (EMS Battery Control mode).
+# Must be "Battery Priority" for a battery discharge command (50207 > 0) to
+# actually fire; "PV Priority" silently ignores discharge and charges from PV.
+POWER_OUTPUT_PRIORITY: dict[str, int] = {
+    "PV Priority":      0,
+    "Battery Priority": 1,
+}
+
 
 @dataclass(frozen=True, kw_only=True)
 class SelfaSensorDescription(SensorEntityDescription):
