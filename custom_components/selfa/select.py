@@ -5,10 +5,13 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN, CONF_EXPERT_MODE, WORKING_MODES
+from .const import DOMAIN, CONF_EXPERT_MODE, WORKING_MODES, POWER_OUTPUT_PRIORITY
 from .coordinator import SelfaCoordinator
 
 WORKING_MODES_INV = {v: k for k, v in WORKING_MODES.items()}
+POWER_OUTPUT_PRIORITY_INV = {v: k for k, v in POWER_OUTPUT_PRIORITY.items()}
+
+REG_POWER_OUTPUT_PRIORITY = 50210
 
 
 async def async_setup_entry(
@@ -20,7 +23,10 @@ async def async_setup_entry(
         return
 
     coordinator: SelfaCoordinator = hass.data[DOMAIN][entry.entry_id]
-    async_add_entities([SelfaWorkingModeSelect(coordinator)])
+    async_add_entities([
+        SelfaWorkingModeSelect(coordinator),
+        SelfaPowerOutputPrioritySelect(coordinator),
+    ])
 
 
 class SelfaWorkingModeSelect(CoordinatorEntity[SelfaCoordinator], SelectEntity):
@@ -44,4 +50,28 @@ class SelfaWorkingModeSelect(CoordinatorEntity[SelfaCoordinator], SelectEntity):
     async def async_select_option(self, option: str) -> None:
         value = WORKING_MODES[option]
         await self.coordinator.async_write_register(50000, value)
+        await self.coordinator.async_request_refresh()
+
+
+class SelfaPowerOutputPrioritySelect(CoordinatorEntity[SelfaCoordinator], SelectEntity):
+    _attr_has_entity_name = True
+    _attr_name = "Power Output Priority"
+    _attr_options = list(POWER_OUTPUT_PRIORITY.keys())
+
+    def __init__(self, coordinator: SelfaCoordinator) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.serial_number}_power_output_priority"
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        return DeviceInfo(identifiers={(DOMAIN, self.coordinator.serial_number)})
+
+    @property
+    def current_option(self) -> str | None:
+        raw = self.coordinator.data.get("power_output_priority")
+        return POWER_OUTPUT_PRIORITY_INV.get(raw)
+
+    async def async_select_option(self, option: str) -> None:
+        value = POWER_OUTPUT_PRIORITY[option]
+        await self.coordinator.async_write_register(REG_POWER_OUTPUT_PRIORITY, value)
         await self.coordinator.async_request_refresh()

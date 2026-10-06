@@ -341,4 +341,7 @@ class SelfaCoordinator(DataUpdateCoordinator):
         # Battery SOC limits (read by switch + number entities)
         result["battery_low_soc_protection"] = bool(reg_map.get(52502, 0))
 
+        # EMS power-output priority (50210), read by the priority select entity
+        result["power_output_priority"] = reg_map.get(50210)
+
         return result
