@@ -37,14 +37,15 @@ def test_read_registers_success():
 def test_read_registers_modbus_exception():
     exc = modbus_exception(0xFC, 0x02)
     sock = make_mock_socket([exc])
-    with pytest.raises(UpdateFailed, match="Modbus exception"):
+    with pytest.raises(UpdateFailed, match="Modbus exception .* code 0x2"):
         _read_registers(sock, 0xFC, 60000, 1)
 
 
 def test_read_registers_short_response():
-    sock = make_mock_socket([b"\xFC\x03"])  # only 2 bytes — too short
-    sock.recv.side_effect = [b"\xFC\x03"]  # header recv returns < 3 bytes
-    with pytest.raises(UpdateFailed, match="Short response"):
+    # A partial header is read on until the inverter closes the connection.
+    sock = MagicMock()
+    sock.recv.side_effect = [b"\xFC\x03", b""]
+    with pytest.raises(UpdateFailed, match="Connection closed"):
         _read_registers(sock, 0xFC, 11000, 1)
 
 
@@ -106,8 +107,7 @@ def test_fetch_returns_all_sensor_keys(mock_socket):
 
     responses = _build_full_responses()
     sock = make_mock_socket(responses)
-    mock_socket.return_value.__enter__ = lambda s: sock
-    mock_socket.return_value.__exit__ = MagicMock(return_value=False)
+    mock_socket.return_value = sock
 
     coord = SelfaCoordinator.__new__(SelfaCoordinator)
     coord.host = "192.168.1.1"
@@ -145,8 +145,7 @@ def test_fetch_pv_power(mock_socket):
         modbus_response(0xFC, [0] * 4),      # 33000..33003
     ]
     sock = make_mock_socket(responses)
-    mock_socket.return_value.__enter__ = lambda s: sock
-    mock_socket.return_value.__exit__ = MagicMock(return_value=False)
+    mock_socket.return_value = sock
 
     coord = SelfaCoordinator.__new__(SelfaCoordinator)
     coord.host = "192.168.1.1"
@@ -179,8 +178,7 @@ def test_fetch_battery_soc(mock_socket):
         modbus_response(0xFC, soc_regs),     # 33000..33003
     ]
     sock = make_mock_socket(responses)
-    mock_socket.return_value.__enter__ = lambda s: sock
-    mock_socket.return_value.__exit__ = MagicMock(return_value=False)
+    mock_socket.return_value = sock
 
     coord = SelfaCoordinator.__new__(SelfaCoordinator)
     coord.host = "192.168.1.1"
@@ -207,8 +205,7 @@ def test_fetch_serial_number(mock_socket):
     ] + [modbus_response(0xFC, [0] * count) for _, count in REGISTER_BATCHES]
 
     sock = make_mock_socket(responses)
-    mock_socket.return_value.__enter__ = lambda s: sock
-    mock_socket.return_value.__exit__ = MagicMock(return_value=False)
+    mock_socket.return_value = sock
 
     coord = SelfaCoordinator.__new__(SelfaCoordinator)
     coord.host = "192.168.1.1"
@@ -241,8 +238,7 @@ def test_fetch_skips_failed_batch(mock_socket):
         modbus_response(0xFC, soc_regs),     # 33000
     ]
     sock = make_mock_socket(responses)
-    mock_socket.return_value.__enter__ = lambda s: sock
-    mock_socket.return_value.__exit__ = MagicMock(return_value=False)
+    mock_socket.return_value = sock
 
     coord = SelfaCoordinator.__new__(SelfaCoordinator)
     coord.host = "192.168.1.1"
@@ -259,3 +255,126 @@ def test_fetch_skips_failed_batch(mock_socket):
     # Sensors from successful batches still have values
     assert result["battery_soc"] == pytest.approx(75.0)
     assert result["inverter_status"] == 2
+
+
+# ---------------------------------------------------------------------------
+# Desync: a reply that doesn't belong to the request (2026-10-05)
+# ---------------------------------------------------------------------------
+
+def test_read_registers_rejects_reply_of_wrong_length():
+    """A stale 6-register reply must not be decoded as a 9-register batch."""
+    from custom_components.selfa.coordinator import _DesyncError
+
+    sock = make_mock_socket([modbus_response(0xFC, [5400, 17, 0, 0, 0, 935])])
+    with pytest.raises(_DesyncError, match="doesn't match"):
+        _read_registers(sock, 0xFC, 31000, 9)
+
+
+def test_read_registers_rejects_reply_from_other_slave():
+    from custom_components.selfa.coordinator import _DesyncError
+
+    sock = make_mock_socket([modbus_response(0x01, [1, 2, 3])])
+    with pytest.raises(_DesyncError, match="slave"):
+        _read_registers(sock, 0xFC, 11000, 3)
+
+
+def test_read_registers_timeout_is_desync():
+    from custom_components.selfa.coordinator import _DesyncError
+
+    sock = MagicMock()
+    sock.recv.side_effect = TimeoutError("timed out")
+    with pytest.raises(_DesyncError):
+        _read_registers(sock, 0xFC, 11000, 3)
+
+
+def test_fetch_reconnects_after_desync(mock_socket):
+    """After a mismatched reply the rest of the poll uses a new connection."""
+    from custom_components.selfa.coordinator import SelfaCoordinator
+
+    batches = [count for _, count in REGISTER_BATCHES]
+    first = make_mock_socket([
+        modbus_response(0xFC, [2]),          # 10105
+        modbus_response(0xFC, [0] * 5),      # 11000: wrong length
+    ])
+    second = make_mock_socket(
+        [modbus_response(0xFC, [0] * n) for n in batches[2:6]]
+        + [modbus_response(0xFC, [0] * 4)]   # 25100
+        + [modbus_response(0xFC, [7500, 9900, 0, 300])]  # 33000
+        + [modbus_response(0xFC, [0] * n) for n in batches[8:]])
+    mock_socket.side_effect = [first, second]
+
+    coord = SelfaCoordinator.__new__(SelfaCoordinator)
+    coord.host = "192.168.1.1"
+    coord.port = 5743
+    coord.slave = 0xFC
+    coord.serial_number = "already read"
+    coord.crc_error_count = 0
+    coord.breaker_type = "16A"
+    coord.max_import_kva = 0.0
+
+    result = coord._fetch()
+
+    assert mock_socket.call_count == 2
+    first.close.assert_called()
+    second.close.assert_called()
+    assert result["inverter_status"] == 2
+    assert result["grid_meter_power"] is None   # the skipped batch
+    assert result["battery_soc"] == pytest.approx(75.0)
+
+
+# ---------------------------------------------------------------------------
+# Energy counters: rate bound instead of the two-poll gate
+# ---------------------------------------------------------------------------
+
+def _filter_coordinator():
+    from custom_components.selfa.coordinator import SelfaCoordinator
+
+    coord = SelfaCoordinator.__new__(SelfaCoordinator)
+    coord._last_data = {}
+    coord._pending = {}
+    coord._accepted_at = {}
+    coord._dropping = set()
+    coord._last_poll_at = None
+    coord.crc_error_count = 0
+    return coord
+
+
+def _poll(coord, values: list[float], monkeypatch, start: float = 1000.0) -> list[float]:
+    """Feed total_grid_purchase readings 5 s apart from `start`, return what's
+    reported."""
+    import asyncio
+    import types
+
+    from custom_components.selfa import coordinator as module
+
+    clock = [start]
+    monkeypatch.setattr(module, "time", types.SimpleNamespace(monotonic=lambda: clock[0]))
+    reported = []
+    for value in values:
+        async def submit(priority, func, *args, value=value):
+            return {"total_grid_purchase": value}
+        coord._submit = submit
+        reported.append(asyncio.run(coord._async_update_data())["total_grid_purchase"])
+        clock[0] += 5
+    return reported
+
+
+def test_energy_counter_rejects_repeated_misread(monkeypatch):
+    """The 2026-10-05 misread, repeated over several polls, never gets in,
+    so the real readings after it aren't rejected as drops."""
+    coord = _filter_coordinator()
+    reported = _poll(coord, [1604.2, 1604.3, 19671.7, 19671.7, 19671.7, 1604.3, 1604.4],
+                     monkeypatch)
+    assert reported == [1604.2, 1604.3, 1604.3, 1604.3, 1604.3, 1604.3, 1604.4]
+
+
+def test_energy_counter_never_goes_backwards(monkeypatch):
+    coord = _filter_coordinator()
+    assert _poll(coord, [10.0, 9.0, 10.1], monkeypatch) == [10.0, 10.0, 10.1]
+
+
+def test_energy_counter_catches_up_after_outage(monkeypatch):
+    """A counter that wasn't read for an hour may have grown by kWh."""
+    coord = _filter_coordinator()
+    _poll(coord, [10.0, 10.1], monkeypatch)
+    assert _poll(coord, [18.1], monkeypatch, start=1005.0 + 3600) == [18.1]

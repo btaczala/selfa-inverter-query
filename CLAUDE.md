@@ -41,12 +41,13 @@ The integration lives entirely in `custom_components/selfa/`.
 
 **Expert Mode** (disabled by default): when enabled, registers SELECT, SWITCH, and NUMBER entities that can write Modbus registers via `coordinator.async_write_register()`. Requires integration reload to take effect.
 
-**Spike gate**: large value changes require 2 consecutive matching polls before being accepted. Thresholds are unit-based (kW, kWh, %, V, A, °C, Hz). Energy counters are monotonic.
+**Spike gate**: large value changes require 2 consecutive matching polls before being accepted. Thresholds are unit-based (kW, kWh, %, V, A, °C, Hz). Energy counters (`TOTAL_INCREASING`) skip the gate: they never go backwards, and an increase faster than `_MAX_ENERGY_RATE_KW` over the time since the counter last moved is rejected. A two-poll check isn't enough for them -- a misread that repeats passes it, and a counter that's once wrongly high would reject every real reading as a drop until the integration is reloaded (2026-10-05).
 
 **Modbus protocol details**:
 - Raw RTU framing over a plain TCP socket (not Modbus TCP)
 - FC03 for reads, FC06 for single-register writes
 - CRC-16 (poly 0xA001, init 0xFFFF); `CrcError` increments a diagnostic counter and skips the batch
+- No transaction id: a reply is only checked against its request by slave, function code and byte count. Any `_DesyncError` (bad CRC, mismatched reply, short read, timeout) skips the batch and reconnects, since a stale frame left in the socket would otherwise be decoded as the next batch's registers
 - 10s socket timeout; on failure the coordinator retains last known values
 
 **Register reference**: `SFH_SELFA Hybrid Inverter MODBUS RTU Protocol.pdf` (repo root) contains the full register map and protocol specification.

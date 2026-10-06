@@ -3,6 +3,7 @@ import itertools
 import logging
 import socket
 import struct
+import time
 from dataclasses import dataclass, field
 from datetime import timedelta
 from typing import Any, Callable
@@ -26,6 +27,12 @@ _CONFIRM_THRESHOLD_BY_UNIT: dict[str, float] = {
     "°C": 5.0,
     "Hz": 2.0,
 }
+
+# Upper bound on how fast any energy counter can grow (kWh per hour), plus
+# room for the counters' 0.1 kWh resolution. Far above what the inverter and
+# a 16-32 A connection can do, far below a misread.
+_MAX_ENERGY_RATE_KW = 50.0
+_ENERGY_SLACK_KWH = 0.3
 
 # Contiguous register ranges to fetch in one request: (start, count)
 REGISTER_BATCHES = [
@@ -58,7 +65,16 @@ class _ModbusJob:
     args: tuple = field(compare=False)
 
 
-class _CrcError(UpdateFailed):
+class _DesyncError(UpdateFailed):
+    """Raised when the connection can no longer be trusted to line up
+    responses with requests (bad CRC, short read, timeout, or a response
+    that doesn't match the request). Modbus RTU over TCP has no transaction
+    id, so a late or stray frame left in the socket would otherwise be read
+    as the reply to the next request -- every later batch in the poll then
+    decodes the previous batch's registers."""
+
+
+class _CrcError(_DesyncError):
     """Raised when a Modbus response has a bad CRC."""
 
 
@@ -75,27 +91,41 @@ def _crc16(data: bytes) -> int:
     return crc
 
 
+def _recv_exact(sock: socket.socket, size: int) -> bytes:
+    data = b""
+    while len(data) < size:
+        chunk = sock.recv(size - len(data))
+        if not chunk:
+            raise _DesyncError("Connection closed by inverter")
+        data += chunk
+    return data
+
+
 def _read_registers(sock: socket.socket, slave: int, start: int,
                     count: int) -> list[int]:
     req = struct.pack(">BBHH", slave, 0x03, start, count)
     req += struct.pack("<H", _crc16(req))
     sock.sendall(req)
 
-    header = sock.recv(3)
-    if len(header) < 3:
-        raise UpdateFailed("Short response from inverter")
-    if header[1] == 0x83:
-        exc = sock.recv(3)
-        raise UpdateFailed(
-            f"Modbus exception at reg {start}: code {exc[0]:#x}")
+    try:
+        header = _recv_exact(sock, 3)
+        if header[0] != slave:
+            raise _DesyncError(
+                f"Response from slave {header[0]} to a read of reg {start}")
+        if header[1] == 0x83:
+            # slave, 0x83, exception code, CRC: only the CRC is left
+            _recv_exact(sock, 2)
+            raise UpdateFailed(
+                f"Modbus exception at reg {start}: code {header[2]:#x}")
+        if header[1] != 0x03 or header[2] != 2 * count:
+            raise _DesyncError(
+                f"Response (function {header[1]:#x}, {header[2]} bytes) doesn't"
+                f" match the read of {count} registers at {start}")
 
-    byte_count = header[2]
-    payload = b""
-    while len(payload) < byte_count + 2:  # +2 for CRC
-        chunk = sock.recv(byte_count + 2 - len(payload))
-        if not chunk:
-            raise UpdateFailed("Connection closed by inverter")
-        payload += chunk
+        byte_count = header[2]
+        payload = _recv_exact(sock, byte_count + 2)  # +2 for CRC
+    except OSError as e:  # includes the socket timeout
+        raise _DesyncError(f"Reading reg {start}: {e}") from e
 
     data_bytes = payload[:byte_count]
     received_crc = struct.unpack("<H", payload[byte_count:byte_count + 2])[0]
@@ -153,6 +183,11 @@ class SelfaCoordinator(DataUpdateCoordinator):
         self.max_import_kva: float = 0.0
         self._last_data: dict = {}
         self._pending: dict = {}  # values waiting for confirmation (spike gate)
+        # Energy counters: when each last moved forward (monotonic seconds),
+        # and which are currently reading lower than their last value.
+        self._accepted_at: dict[str, float] = {}
+        self._dropping: set[str] = set()
+        self._last_poll_at: float | None = None
         self.crc_error_count: int = 0
         self._modbus_queue: asyncio.PriorityQueue[_ModbusJob] = asyncio.PriorityQueue()
         self._modbus_seq = itertools.count()
@@ -206,6 +241,7 @@ class SelfaCoordinator(DataUpdateCoordinator):
                 return {**self._last_data, "crc_error_count": self.crc_error_count}
             raise
 
+        now = time.monotonic()
         if self._last_data:
             for key, val in result.items():
                 last = self._last_data.get(key)
@@ -228,12 +264,33 @@ class SelfaCoordinator(DataUpdateCoordinator):
                 if threshold is None:
                     continue
 
-                # Energy counters must never go backwards (no confirmation needed)
-                if sensor.state_class == SensorStateClass.TOTAL_INCREASING and val < last:
-                    _LOGGER.debug(
-                        "Spike filter: %s dropped %.3f → %.3f, keeping last", key, last, val)
-                    result[key] = last
+                # Energy counters must never go backwards, and can't grow
+                # faster than the house can move energy. The rate bound
+                # replaces the confirmation gate for them: a misread that
+                # repeats over two polls would pass the gate, and once a
+                # counter is wrongly high every real reading is a "drop" and
+                # gets rejected until the integration is reloaded.
+                if sensor.state_class == SensorStateClass.TOTAL_INCREASING:
                     self._pending.pop(key, None)
+                    if val < last:
+                        log = _LOGGER.debug if key in self._dropping else _LOGGER.warning
+                        log("Spike filter: %s dropped %.3f → %.3f, keeping last",
+                            key, last, val)
+                        self._dropping.add(key)
+                        result[key] = last
+                        continue
+                    self._dropping.discard(key)
+                    since = self._accepted_at.get(key, self._last_poll_at)
+                    hours = (now - since) / 3600 if since is not None else 0.0
+                    allowed = _MAX_ENERGY_RATE_KW * hours + _ENERGY_SLACK_KWH
+                    if val - last > allowed:
+                        _LOGGER.warning(
+                            "Spike filter: %s jumped %.3f → %.3f (more than %.3f kWh"
+                            " in %.0f s), keeping last",
+                            key, last, val, allowed, hours * 3600)
+                        result[key] = last
+                        continue
+                    self._accepted_at[key] = now
                     continue
 
                 delta = abs(val - last)
@@ -258,13 +315,17 @@ class SelfaCoordinator(DataUpdateCoordinator):
                     result[key] = last
 
         self._last_data = result
+        self._last_poll_at = now
         return result
 
     def _fetch(self) -> dict:
         reg_map: dict[int, int] = {}
 
-        with socket.create_connection((self.host, self.port),
-                                      timeout=10) as sock:
+        def connect() -> socket.socket:
+            return socket.create_connection((self.host, self.port), timeout=10)
+
+        sock = connect()
+        try:
             # Read device info once (serial + firmware)
             if self.serial_number == "unknown":
                 try:
@@ -277,6 +338,9 @@ class SelfaCoordinator(DataUpdateCoordinator):
                     self.firmware_version = "v{:02d}.{:02d}.{:02d}.{:02d}".format(
                         (fw >> 24) & 0xFF, (fw >> 16) & 0xFF, (fw >> 8) & 0xFF,
                         fw & 0xFF)
+                except _DesyncError:
+                    sock.close()
+                    sock = connect()
                 except Exception:
                     pass
 
@@ -285,13 +349,25 @@ class SelfaCoordinator(DataUpdateCoordinator):
                     regs = _read_registers(sock, self.slave, start, count)
                     for i, val in enumerate(regs):
                         reg_map[start + i] = val
-                except _CrcError as e:
-                    self.crc_error_count += 1
+                except _DesyncError as e:
+                    if isinstance(e, _CrcError):
+                        self.crc_error_count += 1
+                    # Whatever is left in this socket would be read as the
+                    # next batch's reply: continue on a new connection.
+                    _LOGGER.debug("Skipping batch starting at %d and"
+                                  " reconnecting: %s", start, e)
+                    sock.close()
+                    try:
+                        sock = connect()
+                    except OSError as e:
+                        _LOGGER.debug("Reconnect failed, skipping the rest of"
+                                      " this poll: %s", e)
+                        break
+                except UpdateFailed as e:
                     _LOGGER.debug("Skipping batch starting at %d: %s", start,
                                   e)
-                except (UpdateFailed, OSError) as e:
-                    _LOGGER.debug("Skipping batch starting at %d: %s", start,
-                                  e)
+        finally:
+            sock.close()
 
         _SENTINEL = {
             "uint16": 0xFFFF,
